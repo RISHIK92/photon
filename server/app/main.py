@@ -16,7 +16,9 @@ from app.routers import onboarding
 from app.routers import tools
 from app.routers import agent
 from app.routers import github_app
+from app.routers import slack as slack_router
 from app.routers import dev_github_setup
+from app.routers import dev_slack_setup
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -120,11 +122,13 @@ app.include_router(onboarding.router,   prefix="/api/repos",       tags=["onboar
 app.include_router(tools.router,        prefix="/api/tools",       tags=["tools"])  # unauthenticated for the demo, see CLAUDE.md
 app.include_router(agent.router,        prefix="/api/agent",       tags=["agent"])  # unauthenticated for the demo, see CLAUDE.md
 app.include_router(github_app.router,   prefix="/api/integrations/github", tags=["github"])
+app.include_router(slack_router.router, prefix="/api/integrations/slack",  tags=["slack"])
 
 # Dev-only GitHub App manifest bootstrap — never linked from product UI,
 # not mounted in production. See app/routers/dev_github_setup.py.
 if settings.app_env != "production":
     app.include_router(dev_github_setup.router, prefix="/dev", tags=["dev"])
+    app.include_router(dev_slack_setup.router, prefix="/dev", tags=["dev"])
 
 
 # ─── WebSocket endpoint ───────────────────────────────────────────────────────

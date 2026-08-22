@@ -21,6 +21,9 @@ class AgentAskRequest(BaseModel):
     screen_context: Optional[str] = None
     screen_image_base64: Optional[str] = None  # a JPEG frame, base64-encoded
     language: Optional[str] = None  # BCP-47 (te-IN, ta-IN, hi-IN, en-IN) — answer in this
+    # Which tenant's connected sources may be searched. Absent = the demo
+    # corpus only, which is what keeps the seeded scenarios working.
+    workspace_id: Optional[str] = None
     # Only consulted when repo_id is omitted — lets the loop disambiguate
     # across a workspace's repos instead of falling back to the single
     # seed repo. This endpoint is still unauthenticated (see CLAUDE.md's

@@ -18,5 +18,5 @@ celery_app.conf.update(
     task_track_started=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
-    imports=["app.tasks.ingestion"],
+    imports=["app.tasks.ingestion", "app.tasks.slack_ingest"],
 )

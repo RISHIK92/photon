@@ -151,6 +151,64 @@ class WorkspaceRead(SQLModel):
 # what's visible, and by tasks/ingestion.py to know which installation's
 # token to mint for cloning. See app/services/github_app_auth.py.
 
+class ConnectionScope(str, Enum):
+    """Who a connected source belongs to.
+
+    WORKSPACE — shared: every member's questions may draw on it.
+    USER      — private to the person who connected it. On a call it is
+                only used for turns attributed to that person (see the
+                speaker-identity plumbing), never for everyone.
+    """
+    WORKSPACE = "workspace"
+    USER = "user"
+
+
+# ─── Slack ────────────────────────────────────────────────────────────────
+
+
+class SlackInstallation(SQLModel, table=True):
+    """One Slack workspace connected to one Photon workspace."""
+    __tablename__ = "slack_installations"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    scope: ConnectionScope = ConnectionScope.WORKSPACE
+    owner_user_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    team_id: str = Field(sa_column=Column(String, nullable=False, index=True))
+    team_name: str
+    # Fernet-encrypted; never returned by any endpoint. A bot token reads
+    # every channel the app was added to, so it does not sit in plain text.
+    bot_token_encrypted: str
+    bot_user_id: Optional[str] = None
+    installed_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_synced_at: Optional[datetime] = None
+
+
+class SlackChannel(SQLModel, table=True):
+    """A channel the workspace chose to index. Selection is explicit:
+    connecting Slack must not silently ingest every channel a bot can see,
+    including ones people forgot it was in."""
+    __tablename__ = "slack_channels"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    installation_id: str = Field(sa_column=Column(String, ForeignKey("slack_installations.id", ondelete="CASCADE"), nullable=False, index=True))
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    channel_id: str
+    name: str
+    is_private: bool = False
+    selected: bool = True
+    message_count: int = 0
+    last_synced_at: Optional[datetime] = None
+
+
+class SlackInstallationRead(SQLModel):
+    id: str
+    team_id: str
+    team_name: str
+    scope: ConnectionScope
+    created_at: datetime
+    last_synced_at: Optional[datetime]
+
+
 # ─── Meetings ─────────────────────────────────────────────────────────────
 
 
@@ -211,18 +269,6 @@ class TranscriptEntryCreate(SQLModel):
     speaker_name: str
     speaker_identity: Optional[str] = None
     text: str
-
-
-class ConnectionScope(str, Enum):
-    """Who a connected source belongs to.
-
-    WORKSPACE — shared: every member's questions may draw on it.
-    USER      — private to the person who connected it. On a call it is
-                only used for turns attributed to that person (see the
-                speaker-identity plumbing), never for everyone.
-    """
-    WORKSPACE = "workspace"
-    USER = "user"
 
 
 class GitHubInstallation(SQLModel, table=True):

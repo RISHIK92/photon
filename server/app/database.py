@@ -67,6 +67,9 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS owner_user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE"
         ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_slack_channels_workspace ON slack_channels (workspace_id)"
+        ))
         # GitHub App support: OAuth login linking (users.github_id/login,
         # password now optional) and per-repo installation tagging (for the
         # picker's already-imported diff and installation-token cloning).

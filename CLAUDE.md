@@ -149,6 +149,73 @@ derives access from the App's PERMISSIONS, not from OAuth scopes, so
 `scope=user:email` in the authorize URL buys nothing and the call fails
 for any user with a private email — which is the GitHub default.
 
+## Slack — the first connector where the tools stop being fixtures
+
+Built first among the connectors because the S2 demo scenario depends on
+it: the Bangalore partner-rate reason exists ONLY in a Slack thread, so
+this is the source that makes `search_slack` real rather than seeded.
+
+**Setup**: `/dev/slack-app/new` renders a pre-filled app manifest. Slack has
+no server-to-server manifest exchange like GitHub's (their manifest API
+needs an app-configuration token created by hand), so this cannot be fully
+automatic — but it removes every chance to mistype a scope or redirect URL.
+Scopes are read-only (`channels:read/history`, `groups:read/history`,
+`users:read`, `team:read`); the agent never posts to Slack, which a
+reviewer approving the app can see. No event subscriptions: history is
+pulled on demand, so there is no public URL for Slack to call — which is
+also why this works on localhost.
+
+**Tokens are encrypted at rest** (`app/core/crypto.py`, Fernet keyed from
+`secret_key`). The GitHub App never needed this — it mints short-lived
+tokens from a private key — but Slack OAuth returns a long-lived bot token
+that reads every channel the app was added to. A read-only leak of one
+table would otherwise be a full read of a customer's Slack. Rotating
+`secret_key` invalidates stored tokens, and `decrypt()` returns "" rather
+than raising so the app says "reconnect Slack" instead of 500ing.
+
+**Ingestion** (`services/slack_sync.py` + `tasks/slack_ingest.py`):
+- Thread REPLIES are fetched, not just the channel timeline — the S2 answer
+  lives in a reply, not in the message that opened the thread.
+- Point ids are `uuid5(workspace:channel:ts)`, so a re-sync UPDATES a
+  message instead of duplicating it.
+- Incremental by `last_synced_at`: re-embedding unchanged text costs real
+  money.
+- 429s honour `Retry-After` — ignoring Slack's rate limits gets the app
+  throttled for everyone in the customer's workspace.
+- One collection with a `workspace_id` payload filter, not a collection per
+  tenant, and the filter is applied INSIDE the vector query: filtering
+  post-hoc would let one tenant's messages occupy the top-k and silently
+  starve another's.
+
+**Channel selection is explicit** — connecting Slack must not quietly index
+every channel a bot happens to be in. Deselecting stops future syncs but
+does not retroactively purge, so a mis-click cannot destroy history.
+
+**`search_slack` now prefers real data**, falling back to the seed corpus
+when a workspace has none indexed — which keeps the demo scenarios working
+on a fresh deployment and makes a just-connected-but-not-yet-synced
+workspace degrade to "nothing found" rather than an error. Real hits use
+the same `slack:#channel:ts` locator shape as the fixture, so the evidence
+panel, citation rules and verifier treat them identically.
+
+**`workspace_id` is forced by the loop, never planned** (`_WORKSPACE_ID_TOOLS`
+in `loop.py`, same pattern as `repo_id`) and is deliberately absent from the
+schema the planner sees: a hallucinated workspace id would be a
+cross-tenant read, not merely a wrong answer.
+
+**A real regression caught by the eval while doing this**: S1 dropped to
+0/3 on content. The planner had started calling `get_account_logs` ALONE,
+so the answer correctly reported "their endpoint returns 401" and never
+reached "because the signing secret was rotated on Aug 14" — right, and
+useless to the person on the call. The logs hold the SYMPTOM, the account
+record holds the CAUSE. Fixed with an explicit plan rule to call both for
+"why is <customer> broken", exactly like the earlier search_code +
+explain_why fix. Eval back to 16/16.
+
+**Not yet built**: the Slack UI (connect card, channel picker) — the
+backend, encryption, sync and tool are done and the endpoints degrade
+cleanly with a 503 until an app is created.
+
 ## Multi-party calls — poke to address, meeting codes, shared transcript
 
 Decided with the user: **poke by button AND wake word**, guests treated as

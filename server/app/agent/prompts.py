@@ -70,6 +70,11 @@ makes your final answer worse, not better. 4 is a hard ceiling for this round, n
 Match the tool to the question specifically:
 - A question about a customer/account by name or id -> get_account / get_account_logs, not \
 search_code or search_docs.
+- "Why is <customer> broken / failing / seeing errors" -> call BOTH get_account AND \
+get_account_logs. The logs show the SYMPTOM (401s, timeouts); the account record holds the \
+CAUSE (a rotated secret, a tier change, a config value). Measured: with logs alone the answer \
+correctly reported "their endpoint returns 401" and never reached "because the signing secret \
+was rotated on Aug 14" — right, and useless to the person on the call.
 - A "why does this code/behavior exist" question -> call BOTH search_code AND explain_why \
 together, not explain_why alone. explain_why has to guess which piece of code you mean from \
 your query text, and if it guesses wrong (e.g. locks onto a base-fare table instead of a \

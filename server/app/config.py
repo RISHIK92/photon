@@ -128,6 +128,15 @@ class Settings(BaseSettings):
             value = value.replace("\\n", "\n")
         return value.strip() + "\n"  # PEM parsers want a trailing newline
 
+    # ─── Slack ───────────────────────────────────────────────────────────
+    # A Slack app is per-deployment, created once from the manifest at
+    # /dev/slack-app/new. The bot token that OAuth returns is stored
+    # ENCRYPTED (app/core/crypto.py), not in these settings — this is only
+    # the app's own identity.
+    slack_client_id: str = ""
+    slack_client_secret: str = ""
+    slack_signing_secret: str = ""
+
     # Used to build the manifest's redirect_url/hook_attributes.url and the
     # OAuth redirect_uri — must be a URL GitHub can redirect a browser back
     # to (localhost is fine for the manifest/OAuth flows below; it is NOT
