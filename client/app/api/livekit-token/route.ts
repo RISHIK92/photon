@@ -45,6 +45,46 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Your session expired — sign in again" }, { status: 401 });
     }
     const user = await me.json();
+
+    // Being signed in is not the same as being let into THIS call — only a
+    // workspace member of the meeting's own workspace gets in for free.
+    // Everyone else (a registered user who just isn't on this team) is a
+    // stranger to this room and must pass the same admission check a guest
+    // does, or the waiting room is trivially bypassable by anyone with an
+    // account.
+    const meetingRes = await fetch(`${BRAIN_API}/api/meetings/${encodeURIComponent(room)}`, {
+      headers: { authorization: authHeader },
+    });
+    if (!meetingRes.ok) {
+      return NextResponse.json({ error: "No meeting with that code" }, { status: 404 });
+    }
+    const meeting = await meetingRes.json();
+
+    const workspacesRes = await fetch(`${BRAIN_API}/api/workspaces`, {
+      headers: { authorization: authHeader },
+    });
+    const workspaces = workspacesRes.ok ? await workspacesRes.json() : [];
+    const isMember = workspaces.some((w: { id: string }) => w.id === meeting.workspace_id);
+
+    if (!isMember) {
+      if (!knockId) {
+        return NextResponse.json(
+          { error: "Ask to join first — someone in the call has to let you in" },
+          { status: 403 }
+        );
+      }
+      const admission = await fetch(
+        `${BRAIN_API}/api/meetings/${encodeURIComponent(room)}/admission/${encodeURIComponent(knockId)}`
+      );
+      const verdict = admission.ok ? await admission.json() : { admitted: false };
+      if (!verdict.admitted) {
+        return NextResponse.json(
+          { error: "You haven't been admitted to this call yet" },
+          { status: 403 }
+        );
+      }
+    }
+
     identity = `user:${user.id}`;
     name = user.email;
     metadata = { user_id: user.id, email: user.email, guest: false };

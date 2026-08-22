@@ -61,19 +61,13 @@ class AgentAskRequest(BaseModel):
     screen_image_base64: Optional[str] = None  # a JPEG frame, base64-encoded
     language: Optional[str] = None  # BCP-47 (te-IN, ta-IN, hi-IN, en-IN) — answer in this
     # Which tenant's connected sources may be searched. Absent = the demo
-    # corpus only, which is what keeps the seeded scenarios working.
-    workspace_id: Optional[str] = None
-    # When present, the call's own configuration decides the persona and
-    # which sources may be used. Resolved server-side rather than trusted
-    # from the caller: the worker should not be able to widen a call's
-    # source list by sending a different payload.
-    meeting_slug: Optional[str] = None
-    # Only consulted when repo_id is omitted — lets the loop disambiguate
-    # across a workspace's repos instead of falling back to the single
-    # seed repo. This endpoint is still unauthenticated (see CLAUDE.md's
-    # Phase 3 note), so workspace_id here is client-asserted, not verified
-    # against a session — the same trust boundary as everything else on
-    # this route today, not a new gap introduced by this field.
+    # corpus only, which is what keeps the seeded scenarios working. Only
+    # consulted when repo_id is omitted — lets the loop disambiguate across
+    # a workspace's repos instead of falling back to the single seed repo.
+    # This endpoint is still unauthenticated (see CLAUDE.md's Phase 3
+    # note), so workspace_id here is client-asserted, not verified against
+    # a session — the same trust boundary as everything else on this route
+    # today, not a new gap introduced by this field.
     workspace_id: Optional[str] = None
     # When present, the call's own configuration decides the persona and
     # which sources may be used. Resolved server-side rather than trusted

@@ -7,7 +7,8 @@ export type SourceType =
   | "log"
   | "commit"
   | "pr"
-  | "incident";
+  | "incident"
+  | "screen";
 
 export type Evidence = {
   id: string;
@@ -46,6 +47,7 @@ export const SOURCE_ICON: Record<SourceType, string> = {
   commit: "🔀",
   pr: "🔃",
   incident: "🚨",
+  screen: "🖥️",
 };
 
 export const CITATION_RE = /\[(ev_[0-9a-f]+)\]/g;

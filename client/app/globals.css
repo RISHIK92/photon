@@ -498,9 +498,15 @@ html:has(.l-landing) {
   border-color: rgba(180, 83, 9, 0.5);
 }
 
-.l-btn:disabled,
+.l-btn:disabled {
+  background: var(--l-paper-2);
+  color: var(--l-muted);
+  border: 1px solid var(--l-rule);
+  transform: none;
+}
+
 .l-btn-ghost:disabled {
-  opacity: 0.35;
+  opacity: 0.4;
   transform: none;
 }
 

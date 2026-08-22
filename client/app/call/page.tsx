@@ -321,18 +321,19 @@ export default function CallPage() {
 
           <header
             className="flex shrink-0 items-center gap-4 border-b px-6 py-3"
-            style={{ borderColor: "var(--l-rule)", background: "var(--l-paper)" }}
+            style={{ borderColor: "rgba(255,253,248,.10)", background: "var(--l-night)" }}
           >
             <span
               className="text-[22px] leading-none italic"
-              style={{ fontFamily: "var(--font-display)", color: "var(--l-ink)" }}
+              style={{ fontFamily: "var(--font-display)", color: "var(--l-terra)" }}
             >
               photon
             </span>
-            <span className="h-4 w-px" style={{ background: "var(--l-rule)" }} />
+            <span className="h-4 w-px" style={{ background: "rgba(255,253,248,.16)" }} />
             <button
               onClick={copyCode}
-              className="font-mono text-[13px] tracking-[0.12em] l-quiet"
+              className="font-mono text-[13px] tracking-[0.12em] transition-opacity hover:opacity-70"
+              style={{ color: "var(--l-terra)" }}
               title="Copy the meeting code"
             >
               {copied ? "copied" : meetingCode}
@@ -348,7 +349,6 @@ export default function CallPage() {
               <CallControls
                 captionsOn={captionsOn}
                 onToggleCaptions={() => setCaptionsOn((v) => !v)}
-                onToggleChat={() => openTab("chat")}
                 onOpenAdvanced={() => setPanel("trace")}
                 onCopyCode={copyCode}
                 onLeave={onDisconnected}
@@ -370,7 +370,7 @@ export default function CallPage() {
                     style={{
                       writingMode: "vertical-rl",
                       transform: "rotate(180deg)",
-                      color: "var(--l-muted)",
+                      color: "var(--l-rust)",
                     }}
                   >
                     {TABS.find((t) => t.key === lastTab)?.label ?? "Ask"}
@@ -405,8 +405,8 @@ export default function CallPage() {
                         }}
                         className="rounded-full px-3.5 py-1.5 text-[11px] tracking-[0.16em] uppercase transition-colors"
                         style={{
-                          background: panel === t.key ? "rgba(28,25,23,.06)" : "transparent",
-                          color: panel === t.key ? "var(--l-ink)" : "var(--l-muted)",
+                          background: panel === t.key ? "rgba(180,83,9,.10)" : "transparent",
+                          color: panel === t.key ? "var(--l-rust)" : "var(--l-ink-2)",
                         }}
                       >
                         {t.label}

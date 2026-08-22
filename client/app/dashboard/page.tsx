@@ -7,8 +7,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
 import ConnectGithubDialog from "./ConnectGithubDialog";
 import SourcesGrid from "./SourcesGrid";
-import AgentNameCard from "./AgentNameCard";
 import ConnectSourceModal from "./ConnectSourceModal";
+import WorkspaceMembersDialog from "./WorkspaceMembersDialog";
 import {
   connectRepo,
   createWorkspace,
@@ -16,6 +16,7 @@ import {
   getWorkspaceId,
   estimateIngest,
   importGithubRepos,
+  joinWorkspace,
   listGithubInstallations,
   listInstallationRepos,
   type IngestEstimate,
@@ -78,6 +79,11 @@ function Dashboard() {
   // and which repo is one click from being removed.
   const [wsMenu, setWsMenu] = useState(false);
   const [newWs, setNewWs] = useState<string | null>(null);
+  const [newWsKind, setNewWsKind] = useState<"individual" | "team">("team");
+  const [joinCode, setJoinCode] = useState<string | null>(null);
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinMsg, setJoinMsg] = useState<string | null>(null);
+  const [showMembers, setShowMembers] = useState(false);
   const [showUrlField, setShowUrlField] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const newWsRef = useRef<HTMLInputElement>(null);
@@ -257,12 +263,34 @@ function Dashboard() {
     const name = newWs?.trim();
     if (!name) return;
     try {
-      const ws = await createWorkspace(name);
+      const ws = await createWorkspace(name, newWsKind);
       setWorkspaces((prev) => [...prev, ws]);
       setNewWs(null);
+      setNewWsKind("team");
       await switchWorkspace(ws.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const doJoin = async () => {
+    const code = joinCode?.trim();
+    if (!code) return;
+    setJoinBusy(true);
+    setJoinMsg(null);
+    try {
+      const result = await joinWorkspace(code);
+      if (result.status === "already_member") {
+        setJoinMsg(`You're already a member of ${result.workspace.name}.`);
+        await switchWorkspace(result.workspace.id);
+        setJoinCode(null);
+      } else {
+        setJoinMsg(`Request sent to join ${result.workspace.name} — waiting for an owner to admit you.`);
+      }
+    } catch (e) {
+      setJoinMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setJoinBusy(false);
     }
   };
 
@@ -288,6 +316,11 @@ function Dashboard() {
   const ready = repos.filter((r) => isReady(r.status));
   const indexing = repos.filter((r) => isActive(r.status));
   const workspace = workspaces.find((w) => w.id === current);
+  // Mirrors the server's own gates (require_role(OWNER) on connecting a
+  // source, require_role(MEMBER) on repo add/delete) so a viewer sees a
+  // disabled control with a reason instead of a click that 403s.
+  const canConnectSources = workspace?.role === "owner";
+  const canEditRepos = workspace?.role === "owner" || workspace?.role === "member";
   const firstRun = repos.length === 0 && ghInstallCount === 0;
 
   return (
@@ -372,6 +405,25 @@ function Dashboard() {
                   >
                     + New workspace
                   </button>
+                  <button
+                    onClick={() => {
+                      setJoinCode("");
+                      setJoinMsg(null);
+                      setWsMenu(false);
+                    }}
+                    className="w-full rounded-lg px-3 py-2 text-left text-[12px] tracking-[0.14em] uppercase l-quiet"
+                  >
+                    Join with a code
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowMembers(true);
+                      setWsMenu(false);
+                    }}
+                    className="w-full rounded-lg px-3 py-2 text-left text-[12px] tracking-[0.14em] uppercase l-quiet"
+                  >
+                    Members
+                  </button>
                 </div>
               </>
             )}
@@ -396,25 +448,86 @@ function Dashboard() {
 
       <main className="mx-auto max-w-5xl px-6 pb-24 md:px-10">
         {newWs !== null && (
+          <div className="mt-8 flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <input
+                ref={newWsRef}
+                className="l-input max-w-xs"
+                placeholder="Workspace name"
+                value={newWs}
+                onChange={(e) => setNewWs(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addWorkspace();
+                  if (e.key === "Escape") setNewWs(null);
+                }}
+              />
+              <button onClick={addWorkspace} disabled={!newWs.trim()} className="l-btn">
+                Create
+              </button>
+              <button onClick={() => setNewWs(null)} className="text-[12px] uppercase l-quiet">
+                Cancel
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              {(
+                [
+                  { value: "team" as const, label: "Team", hint: "shared — members you invite can see everything connected here" },
+                  { value: "individual" as const, label: "Individual", hint: "just you — no invites, nothing here is ever shared" },
+                ]
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setNewWsKind(opt.value)}
+                  title={opt.hint}
+                  className="rounded-full px-3 py-1.5 text-[12px] tracking-[0.08em] uppercase transition-colors"
+                  style={
+                    newWsKind === opt.value
+                      ? { background: "var(--l-rust)", color: "var(--l-paper)" }
+                      : { background: "transparent", color: "var(--l-ink-2)", border: "1px solid var(--l-rule)" }
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+              <span className="text-[12px] l-t-muted">
+                {newWsKind === "team"
+                  ? "Shared — members you invite can see everything connected here."
+                  : "Individual — just you; nothing here is ever shared."}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {joinCode !== null && (
           <div className="mt-8 flex items-center gap-3">
             <input
-              ref={newWsRef}
               className="l-input max-w-xs"
-              placeholder="Workspace name"
-              value={newWs}
-              onChange={(e) => setNewWs(e.target.value)}
+              placeholder="Invite code"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") addWorkspace();
-                if (e.key === "Escape") setNewWs(null);
+                if (e.key === "Enter") doJoin();
+                if (e.key === "Escape") setJoinCode(null);
               }}
             />
-            <button onClick={addWorkspace} disabled={!newWs.trim()} className="l-btn">
-              Create
+            <button onClick={doJoin} disabled={!joinCode.trim() || joinBusy} className="l-btn">
+              {joinBusy ? "Joining…" : "Join"}
             </button>
-            <button onClick={() => setNewWs(null)} className="text-[12px] uppercase l-quiet">
+            <button onClick={() => setJoinCode(null)} className="text-[12px] uppercase l-quiet">
               Cancel
             </button>
+            {joinMsg && <span className="text-[13px] l-t-2">{joinMsg}</span>}
           </div>
+        )}
+
+        {showMembers && workspace && (
+          <WorkspaceMembersDialog
+            workspaceName={workspace.name}
+            workspaceKind={workspace.kind}
+            myRole={workspace.role}
+            onClose={() => setShowMembers(false)}
+          />
         )}
 
         {/* what the agent can currently answer from — the actual state of
@@ -526,7 +639,6 @@ function Dashboard() {
           </section>
         )}
 
-        <AgentNameCard workspaceId={current} />
 
         <SourcesGrid
           githubConnected={ghInstallCount}
@@ -535,6 +647,7 @@ function Dashboard() {
             setShowConnectDialog(true);
           }}
           onConnectSource={(key) => setConnectSource(key)}
+          canConnect={canConnectSources}
         />
 
         {ghError && (
@@ -634,12 +747,14 @@ function Dashboard() {
             <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
             <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">Repositories</span>
             <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
-            <button
-              onClick={() => setShowUrlField((v) => !v)}
-              className="text-[11px] tracking-[0.16em] uppercase whitespace-nowrap l-quiet"
-            >
-              {showUrlField ? "Cancel" : "+ Paste a public URL"}
-            </button>
+            {canEditRepos && (
+              <button
+                onClick={() => setShowUrlField((v) => !v)}
+                className="text-[11px] tracking-[0.16em] uppercase whitespace-nowrap l-quiet"
+              >
+                {showUrlField ? "Cancel" : "+ Paste a public URL"}
+              </button>
+            )}
           </div>
 
           {showUrlField && (
@@ -690,7 +805,9 @@ function Dashboard() {
 
                   <StatusPill status={r.status} />
 
-                  {confirmRemove === r.id ? (
+                  {!canEditRepos ? (
+                    <span />
+                  ) : confirmRemove === r.id ? (
                     <span className="flex items-center gap-3 text-[11px] tracking-[0.16em] uppercase">
                       <button
                         onClick={async () => {

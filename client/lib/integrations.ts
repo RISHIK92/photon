@@ -51,13 +51,6 @@ export const INTEGRATIONS: Integration[] = [
     scope: "workspace",
   },
   {
-    key: "linear",
-    name: "Linear",
-    unlocks: "Current status of the fix, and which cycle it lands in",
-    status: "live",
-    scope: "workspace",
-  },
-  {
     key: "notion",
     name: "Notion",
     unlocks: "Runbooks and internal docs that aren't in the repo",

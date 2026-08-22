@@ -181,6 +181,37 @@ export function applyTraceEvent(
         startedT: t,
       });
       break;
+
+    // The tool never ran — a meeting's allowed_tools list excluded it — so
+    // there's no matching tool.start/tool.done pair, just this one event.
+    // Shown as a distinct "blocked" row rather than silently missing, so a
+    // restricted call reads as a deliberate block, not a broken panel.
+    case "tool.blocked":
+      turn.tools.push({
+        id: str(event.id) ?? `${seq}`,
+        tool: str(event.tool) ?? "unknown",
+        args: {},
+        round: num(event.round, 1),
+        startedT: t,
+        ms: 0,
+        status: "blocked",
+        note: `${str(event.tool) ?? "this tool"} is not enabled for this call`,
+      });
+      break;
+    // Round 2 was never run — round 1 already found evidence, so the
+    // second LLM round-trip was skipped to save latency (see loop.py). Shown
+    // as a zero-duration marker stage so the panel proves it wasn't lost.
+    case "plan.skipped":
+      upsertStage(turn, `plan-${num(event.round)}`, {
+        label: `Plan · round ${num(event.round)}`,
+        startedT: t,
+        ms: 0,
+        marker: true,
+        state: "done",
+        detail: str(event.reason) ?? "skipped",
+      });
+      break;
+
     case "tool.done": {
       const call = turn.tools.find((c) => c.id === event.id);
       if (call) {

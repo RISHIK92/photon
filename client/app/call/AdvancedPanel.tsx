@@ -123,7 +123,13 @@ function TurnView({ turn }: { turn: TurnTrace }) {
                   .filter(Boolean)
                   .join(" · ")}
                 ms={call.ms}
-                state={call.ms === undefined ? "running" : call.status === "error" ? "failed" : "done"}
+                state={
+                  call.ms === undefined
+                    ? "running"
+                    : call.status === "error" || call.status === "blocked"
+                      ? "failed"
+                      : "done"
+                }
                 slowest={slowest}
               />
             </div>

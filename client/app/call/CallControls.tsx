@@ -39,7 +39,6 @@ function Icon({ name }: { name: string }) {
         <path d="M9 21h6M12 8v5M9.5 10.5 12 8l2.5 2.5" />
       </>
     ),
-    chat: <path d="M4 5h16v11H9l-5 4z" />,
     more: (
       <>
         <circle cx="12" cy="5" r="1.2" />
@@ -100,14 +99,12 @@ function Round({
 export default function CallControls({
   captionsOn,
   onToggleCaptions,
-  onToggleChat,
   onOpenAdvanced,
   onCopyCode,
   onLeave,
 }: {
   captionsOn: boolean;
   onToggleCaptions: () => void;
-  onToggleChat: () => void;
   onOpenAdvanced: () => void;
   onCopyCode: () => void;
   onLeave: () => void;
@@ -206,10 +203,6 @@ export default function CallControls({
         >
           CC
         </button>
-
-        <Round label="Chat" onClick={onToggleChat}>
-          <Icon name="chat" />
-        </Round>
 
         <div className="relative">
           <Round label="More" onClick={() => setMenu((v) => !v)}>

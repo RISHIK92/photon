@@ -7,6 +7,7 @@ import {
   type CallSource,
 } from "@/lib/api";
 import Toggle from "../_ui/Toggle";
+import AgentNameField from "./AgentNameField";
 
 /** Chosen before joining: what the agent is for, which language, and which
  * sources it may use.
@@ -154,6 +155,8 @@ export default function CallSetup({
           </div>
         )}
       </section>
+
+      <AgentNameField />
 
       {nothingConnected && (
         <div className="border border-[rgba(194,112,61,.4)] bg-[rgba(194,112,61,.06)] rounded p-3 text-sm">

@@ -303,6 +303,7 @@ class Orchestrator:
                 "question": question,
                 "screen_image_base64": screen_image_b64,
                 "language": language,
+                "meeting_slug": self.meeting_slug,
             },
         ) as response:
             response.raise_for_status()

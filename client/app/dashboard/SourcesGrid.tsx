@@ -22,10 +22,15 @@ export default function SourcesGrid({
   githubConnected,
   onConnectGithub,
   onConnectSource,
+  canConnect = true,
 }: {
   githubConnected: number;
   onConnectGithub: () => void;
   onConnectSource: (key: string) => void;
+  /** Connecting a source is OWNER-only server-side (require_role(OWNER) in
+   * routers/connectors.py, github_app.py, jira.py, slack.py) — false disables
+   * the tiles instead of letting a viewer/member click into a 403. */
+  canConnect?: boolean;
 }) {
   // GitHub's label comes from the shared status rather than a local count,
   // so the card, the dialog and the call setup screen all say the same
@@ -55,6 +60,11 @@ export default function SourcesGrid({
         Everything connected here is {SCOPE_LABEL.workspace} — anyone in it can get answers
         from it. Read-only, and scoped to what you select.
       </p>
+      {!canConnect && (
+        <p className="mt-2 text-[12px] l-t-muted">
+          Only an owner of this workspace can connect a new source.
+        </p>
+      )}
 
       <div className="mt-6 grid gap-x-10 md:grid-cols-2 xl:grid-cols-3">
         {live.map((i) => {
@@ -63,7 +73,9 @@ export default function SourcesGrid({
             <button
               key={i.key}
               onClick={connectable(i.key)}
-              className="l-row group relative block w-full border-t py-4 text-left"
+              disabled={!canConnect}
+              title={canConnect ? undefined : "Only an owner can connect a new source"}
+              className="l-row group relative block w-full border-t py-4 text-left disabled:cursor-not-allowed disabled:opacity-50"
               style={{ borderColor: "var(--l-rule)" }}
             >
               <span className="l-row-rule" style={{ background: "var(--l-rust)" }} />

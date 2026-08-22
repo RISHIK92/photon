@@ -136,8 +136,8 @@ export function logout() {
 }
 
 export const listWorkspaces = () => api<Workspace[]>("/api/workspaces");
-export const createWorkspace = (name: string) =>
-  api<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name }) });
+export const createWorkspace = (name: string, kind: "individual" | "team") =>
+  api<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name, kind }) });
 export type IngestEstimate = {
   range_human: string;
   seconds_low: number;
@@ -237,6 +237,9 @@ export type Meeting = {
   slug: string;
   title: string | null;
   workspace_id: string;
+  bot_types: string[];
+  language_mode: string;
+  enabled_sources: string[] | null;
   created_at: string;
   ended_at: string | null;
 };
@@ -413,3 +416,59 @@ export const GITHUB_STATE_LABEL: Record<GithubStatus["state"], string> = {
  * word — so it is a real setting, not decoration. */
 export const updateWorkspace = (patch: { name?: string; agent_name?: string }) =>
   api<Workspace>("/api/workspaces/settings", { method: "PATCH", body: JSON.stringify(patch) });
+
+// ── Workspace invites, join requests, members ──────────────────────────────
+// A code proves someone was pointed at the workspace; an owner's approval is
+// what actually grants access. See server/app/routers/workspaces.py — this
+// is the client half of that flow, which had no UI at all before.
+
+export type WorkspaceRole = "viewer" | "member" | "owner";
+
+export const getWorkspaceInvite = () =>
+  api<{ code: string | null }>("/api/workspaces/invite");
+
+export const rotateWorkspaceInvite = () =>
+  api<{ code: string }>("/api/workspaces/invite", { method: "POST" });
+
+export const revokeWorkspaceInvite = () =>
+  api<void>("/api/workspaces/invite", { method: "DELETE" });
+
+export const joinWorkspace = (code: string) =>
+  api<{ status: "already_member" | "pending"; workspace: { id: string; name: string } }>(
+    "/api/workspaces/join",
+    { method: "POST", body: JSON.stringify({ code }) }
+  );
+
+export type JoinRequest = {
+  id: string;
+  user_id: string;
+  email: string;
+  status: "pending" | "approved" | "rejected";
+  requested_at: string;
+};
+
+export const listJoinRequests = () => api<JoinRequest[]>("/api/workspaces/requests");
+
+export const decideJoinRequest = (requestId: string, approve: boolean, role: WorkspaceRole = "member") =>
+  api<{ status: string }>(`/api/workspaces/requests/${requestId}`, {
+    method: "POST",
+    body: JSON.stringify({ approve, role }),
+  });
+
+export type WorkspaceMember = {
+  user_id: string;
+  email: string;
+  role: WorkspaceRole;
+  joined_at: string;
+};
+
+export const listWorkspaceMembers = () => api<WorkspaceMember[]>("/api/workspaces/members");
+
+export const changeMemberRole = (userId: string, role: WorkspaceRole) =>
+  api<{ user_id: string; role: WorkspaceRole }>(`/api/workspaces/members/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+
+export const removeMember = (userId: string) =>
+  api<void>(`/api/workspaces/members/${userId}`, { method: "DELETE" });

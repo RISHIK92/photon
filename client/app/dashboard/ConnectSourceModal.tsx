@@ -5,10 +5,14 @@ import {
   connectConnector,
   connectJira,
   getConnectorProviders,
+  listConnectorResources,
+  selectConnectorResources,
   startSlackInstall,
   uploadCustomDoc,
   type ProviderField,
 } from "@/lib/api";
+
+type ConnectorResourceRow = { id: string; name: string; selected: boolean };
 
 /** One modal, per-source forms.
  *
@@ -36,7 +40,18 @@ export default function ConnectSourceModal({
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
 
+  // A generic connector isn't usable the instant credentials verify — it
+  // still has to say WHICH of the vendor's resources to index (same
+  // principle as Slack's channel picker: connecting must never silently
+  // index everything). So the modal has a second step for these providers,
+  // reached only after `connect` succeeds.
+  const [connectionId, setConnectionId] = useState<string | null>(null);
+  const [resources, setResources] = useState<ConnectorResourceRow[] | null>(null);
+  const [resourceNote, setResourceNote] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   const generic = ["linear", "notion", "datadog"].includes(sourceKey);
+  const pickingResources = generic && connectionId !== null;
 
   useEffect(() => {
     if (!generic) return;
@@ -55,7 +70,16 @@ export default function ConnectSourceModal({
         for (const f of fields ?? []) {
           (f.config ? config : credentials)[f.key] = values[f.key] ?? "";
         }
-        await connectConnector(sourceKey, credentials, config);
+        const conn = await connectConnector(sourceKey, credentials, config);
+        // Credentials verified — now ask which resources to index, rather
+        // than closing the modal on a connection that syncs nothing.
+        setConnectionId(conn.id);
+        const { resources: available, note } = await listConnectorResources(conn.id);
+        setResources(available);
+        setResourceNote(note);
+        setSelectedIds(new Set(available.filter((r) => r.selected).map((r) => r.id)));
+        setBusy(false);
+        return;
       } else if (sourceKey === "jira") {
         await connectJira(values.site_url ?? "", values.account_email ?? "", values.api_token ?? "");
       } else if (sourceKey === "slack") {
@@ -71,6 +95,30 @@ export default function ConnectSourceModal({
         onConnected();
         return;
       }
+      onConnected();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleResource = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const saveResources = async () => {
+    if (!connectionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await selectConnectorResources(connectionId, Array.from(selectedIds));
       onConnected();
       onClose();
     } catch (e) {
@@ -156,7 +204,7 @@ export default function ConnectSourceModal({
           </div>
         )}
 
-        {generic && (
+        {generic && !pickingResources && (
           <div className="flex flex-col gap-2 mb-2">
             {(fields ?? []).map((f) => (
               <Field key={f.key} label={f.label} help={f.help}>
@@ -172,16 +220,51 @@ export default function ConnectSourceModal({
           </div>
         )}
 
+        {pickingResources && (
+          <div className="flex flex-col gap-2 mb-2">
+            <p className="text-[13px] l-t-2">
+              Credentials verified. Choose what the agent can read — nothing is indexed until
+              you select it here.
+            </p>
+            {resourceNote && <p className="text-[12px] l-t-muted">{resourceNote}</p>}
+            {resources === null && <p className="text-[13px] l-t-muted">Loading resources…</p>}
+            {resources !== null && resources.length === 0 && !resourceNote && (
+              <p className="text-[13px] l-t-muted">No resources found for this connection.</p>
+            )}
+            <div className="max-h-64 overflow-y-auto flex flex-col gap-1">
+              {(resources ?? []).map((r) => (
+                <label
+                  key={r.id}
+                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] hover:bg-[rgba(28,25,23,.04)]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(r.id)}
+                    onChange={() => toggleResource(r.id)}
+                  />
+                  <span className="truncate">{r.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         {error && <p className="text-[13px] l-t-rust mt-2">{error}</p>}
         {done && <p className="text-[13px] l-t-rust mt-2">{done}</p>}
 
         <div className="flex items-center gap-3 mt-4">
           <button
-            onClick={submit}
-            disabled={busy}
+            onClick={pickingResources ? saveResources : submit}
+            disabled={busy || (pickingResources && resources === null)}
             className="l-btn"
           >
-            {busy ? "Checking…" : sourceKey === "slack" ? "Continue to Slack" : "Connect"}
+            {busy
+              ? "Checking…"
+              : pickingResources
+                ? `Save selection${selectedIds.size ? ` (${selectedIds.size})` : ""}`
+                : sourceKey === "slack"
+                  ? "Continue to Slack"
+                  : "Connect"}
           </button>
           <button onClick={onClose} className="text-[12px] uppercase tracking-[0.14em] l-quiet">
             Cancel
