@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
 import ConnectGithubDialog from "./ConnectGithubDialog";
+import SourcesGrid from "./SourcesGrid";
 import {
   connectRepo,
   createWorkspace,
@@ -57,6 +58,7 @@ function Dashboard() {
   // step that leaves our UI, grants access to source code, and is easy to
   // get wrong silently (a user-owned private app simply won't list the org).
   const [showConnectDialog, setShowConnectDialog] = useState(false);
+  const [ghInstallCount, setGhInstallCount] = useState(0);
   const [ghRepos, setGhRepos] = useState<GithubRepoOption[]>([]);
   const [ghSelected, setGhSelected] = useState<Set<number>>(new Set());
   const [ghBusy, setGhBusy] = useState(false);
@@ -83,6 +85,13 @@ function Dashboard() {
           setCurrent(selected);
         }
         await refreshRepos();
+        // Connected-source count on first paint, not only after returning
+        // from a GitHub install redirect.
+        try {
+          setGhInstallCount((await listGithubInstallations()).length);
+        } catch {
+          /* the sources grid just shows "connect" instead of a count */
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -140,6 +149,7 @@ function Dashboard() {
     (async () => {
       try {
         const installations = await listGithubInstallations();
+        setGhInstallCount(installations.length);
         const latest = installations[installations.length - 1];
         if (latest) await openRepoPicker(latest.installation_id);
       } catch (e) {
@@ -265,26 +275,15 @@ function Dashboard() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-8">
-        <section className="mb-8">
-          <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">Sources</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              onClick={() => {
-                setGhError(null);
-                setShowConnectDialog(true);
-              }}
-              disabled={ghConnecting}
-              className="text-left border border-emerald-700/60 bg-emerald-500/5 hover:bg-emerald-500/10 disabled:opacity-50 rounded p-3"
-            >
-              <p className="text-sm">GitHub</p>
-              <p className="text-xs text-neutral-500">
-                {ghConnecting ? "Redirecting to GitHub…" : "Connect an org or account"}
-              </p>
-            </button>
-            <SourceCard name="Slack" status="not connected yet" />
-            <SourceCard name="Email / Outlook" status="not connected yet" />
-          </div>
+        <SourcesGrid
+          githubConnected={ghInstallCount}
+          onConnectGithub={() => {
+            setGhError(null);
+            setShowConnectDialog(true);
+          }}
+        />
 
+        <section className="mb-8">
           {ghError && <p className="text-red-400 text-sm mt-3">{ghError}</p>}
 
           {ghInstallationId !== null && (
@@ -406,19 +405,6 @@ function Dashboard() {
           )}
         </section>
       </main>
-    </div>
-  );
-}
-
-function SourceCard({ name, status, active }: { name: string; status: string; active?: boolean }) {
-  return (
-    <div
-      className={`border rounded p-3 ${
-        active ? "border-emerald-700/60 bg-emerald-500/5" : "border-neutral-800"
-      }`}
-    >
-      <p className="text-sm">{name}</p>
-      <p className="text-xs text-neutral-500">{status}</p>
     </div>
   );
 }
