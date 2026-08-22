@@ -5,12 +5,97 @@ original plan) and `server/` (backend, was `services/brain-api`). All plan
 references to `services/brain-api` mean `server/`; all references to
 `apps/console` mean `client/`.
 
+## LLM providers — text vs vision split (resolved the Gemini quota blocker)
+
+`GEMINI_API_KEY`'s free tier turned out to be capped at **20 requests/DAY**
+for `gemini-2.5-*` (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`) —
+a hard daily cap, not a per-minute one retries can wait out. Each agent
+turn burns 2-4 LLM calls (plan + compose, up to 2 rounds), so this was a
+real blocker for Phase 3.
+
+**Fix**: all TEXT generation moved to OpenRouter (`app/core/llm/
+openrouter.py`, model `deepseek/deepseek-v4-flash-0731`) — the agent
+loop's plan/compose calls, `check_conflict`'s judge call, and the web
+console's `/api/query` streaming (`llm_orchestrator.py`). Gemini
+(`gemini_vision_model = gemini-3.7-flash`) is now reserved exclusively for
+image/screen-frame analysis, once Phase 4 needs it — not used by any code
+yet. Both `OPENROUTER_API_KEY` and the model id were verified live against
+OpenRouter's `/models` list before wiring anything up.
+
+**New known constraint**: OpenRouter's routing to this model has highly
+variable latency in testing — most calls land in a few seconds, but some
+single agent turns have taken 2+ minutes with no error, just a slow
+upstream response. This is a real latency risk for the live-call demo
+(Section 17's "gemini-2.5-pro is too slow for a live call" gotcha applies
+here too, just for a different reason). Worth benchmarking properly before
+Phase 4, and possibly worth a paid/dedicated OpenRouter tier or a faster
+model if it's consistently reproducible.
+
 ## Current phase
 
-**Phase 2 — Tool layer.** Phase 0 (environment) is complete except for the
+**Phase 3 — Agent loop.** Phase 0 (environment) is complete except for the
 manual two-person LiveKit transport test (not a blocker for Phase 1/2/3
-work). Phase 1 (seed corpus) is complete and passed its acceptance test
-(5/5 off-script questions hit real evidence). Phase 2 status below.
+work). Phase 1 (seed corpus) and Phase 2 (tool layer) are complete — see
+their sections below. Phase 3 status below.
+
+### Phase 3 — agent loop (done)
+
+- `app/agent/llm.py` — `generate()` (OpenRouter via `app/core/llm/
+  openrouter.py`, `json_mode` supported) + a tolerant `extract_json()`
+  (strips markdown fences, falls back to regex-extracting the first
+  `{...}` block).
+- `app/agent/prompts.py` — `SYSTEM_RULES` (the three non-negotiable rules
+  + voice rules for a live call), plan-prompt builder (includes the tool
+  schema list and the known-accounts directory so the planner can map a
+  customer name like "Northwind" to `acct_northwind` without a round-trip),
+  compose-prompt builder with one grounded-answer few-shot and one clean-
+  abstention few-shot.
+- `app/agent/verifier.py` — deterministic, no LLM call: strips any claim
+  whose `evidence_ids` aren't fully in the tool-verified set, forces full
+  abstention if >50% of claims fail or zero evidence came back at all,
+  downgrades confidence to `low` on any stripped claim.
+- `app/agent/loop.py` — `answer_question(question, repo_id=None,
+  screen_context=None)`: plan (max 4 calls/round) → execute tools in
+  parallel via `asyncio.gather` → up to `MAX_ROUNDS=2` rounds, `
+  MAX_TOOL_CALLS_TOTAL=6` → compose → verify. `repo_id` defaults to
+  `get_seed_repo_id()` if not passed.
+- `app/routers/agent.py` — `POST /api/agent/ask` (+ `?stream=true`, which
+  chunks the already-verified answer word-by-word over SSE rather than a
+  true token stream — verification needs the complete composed JSON first,
+  so real mid-generation streaming isn't compatible with the verify step).
+- `tests/test_agent_loop.py` — `test_agent_package_has_zero_transport_imports`
+  is a static AST check (no LLM call) that nothing under `app/agent/`
+  imports anything transport-shaped; the other three exercise S1, S2, and
+  a clean-abstention question live against the real corpus/stack. All 4
+  passing as of the last full run.
+
+**Three real bugs caught and fixed while testing this against the live
+stack** (all in git history, not just asserted fixed):
+1. `_format_evidence()` in `prompts.py` re-truncated each evidence snippet
+   to 300 chars on top of `make_evidence()`'s own 800-char cap. For a doc
+   chunk where the relevant section isn't near the top of the file (e.g.
+   `05-webhooks.md`'s retry-policy paragraph starts at char 458), the
+   compose LLM never saw it — a real S3 answer went from correctly
+   flagging the conflict to a false "I don't have evidence for that."
+   Fixed by not re-truncating; `make_evidence()`'s cap is the only one now.
+2. `loop.py`'s `_run_one_call` only auto-filled `repo_id` when the planner
+   omitted it — a planner guess like `"repo_id": "meridian"` (plausible-
+   looking, wrong) silently overrode the correct UUID and emptied out
+   `search_code` results with no error. Fixed to always force the loop's
+   own resolved `repo_id` for repo-scoped tools; also told the planner in
+   the prompt not to bother guessing it.
+3. The planner (`deepseek-v4-flash-0731`) sometimes returns an empty
+   `"calls": []` plan on the very first round even for clearly-answerable
+   questions — observed directly (a rerun of the exact S1 pytest failed
+   with `abstained: True` and an empty `tool_trace` after passing cleanly
+   moments earlier). Before any evidence exists, that's essentially always
+   premature. Fixed with one retry (slightly higher temperature, a firmer
+   nudge) when round 0 comes back empty — confirmed to resolve it on
+   rerun, though given the model's variability this is a mitigation, not
+   a guarantee; worth watching for during the demo.
+
+Not built yet: `services/call-agent/` (Phase 4 — LiveKit transport
+adapter) and the evidence panel UI (Phase 5).
 
 ### Phase 2 — tool layer (done)
 

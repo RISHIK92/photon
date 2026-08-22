@@ -14,6 +14,7 @@ from app.routers import repos, jobs, query, graph, annotations, files
 from app.routers import auth
 from app.routers import onboarding
 from app.routers import tools
+from app.routers import agent
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -113,6 +114,7 @@ app.include_router(files.router,        prefix="/api/files",       tags=["files"
 app.include_router(auth.router,         prefix="/api/auth",        tags=["auth"])
 app.include_router(onboarding.router,   prefix="/api/repos",       tags=["onboarding"])
 app.include_router(tools.router,        prefix="/api/tools",       tags=["tools"])  # unauthenticated for the demo, see CLAUDE.md
+app.include_router(agent.router,        prefix="/api/agent",       tags=["agent"])  # unauthenticated for the demo, see CLAUDE.md
 
 
 # ─── WebSocket endpoint ───────────────────────────────────────────────────────

@@ -11,17 +11,14 @@ from __future__ import annotations
 
 import asyncio
 
-import google.generativeai as genai
 import structlog
 
-from app.config import get_settings
+from app.core.llm.openrouter import sync_chat
 from app.tools.code import search_code
 from app.tools.evidence import tool_error, tool_result
 from app.tools.knowledge import search_docs
 
 log = structlog.get_logger()
-settings = get_settings()
-genai.configure(api_key=settings.gemini_api_key)
 
 _PROMPT = """You are checking exactly one thing: do these two sources assert \
 the SAME fact about the claim below? Do not evaluate correctness, only agreement.
@@ -37,19 +34,6 @@ Source B (code):
 Respond with exactly two lines and nothing else:
 Line 1: one word — agrees, conflicts, or insufficient
 Line 2: under 20 words, citing the specific numbers/facts that agree or disagree."""
-
-
-def _sync_judge(prompt: str) -> str:
-    model = genai.GenerativeModel(settings.gemini_chat_model)
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(temperature=0.0, max_output_tokens=1500),
-    )
-    try:
-        return response.text.strip()
-    except (ValueError, IndexError):
-        # no visible text came back (e.g. all-reasoning-tokens truncation) — treat as insufficient
-        return "insufficient\nthe judge model returned no usable answer"
 
 
 async def check_conflict(claim: str, repo_id: str) -> dict:
@@ -68,12 +52,12 @@ async def check_conflict(claim: str, repo_id: str) -> dict:
 
     prompt = _PROMPT.format(claim=claim, doc_text=doc_ev["snippet"], code_text=code_ev["snippet"])
     try:
-        raw = await asyncio.get_event_loop().run_in_executor(None, _sync_judge, prompt)
+        raw = await asyncio.get_event_loop().run_in_executor(None, sync_chat, prompt, 300, 0.0)
     except Exception as exc:  # noqa: BLE001
         log.error("tool.check_conflict_llm_error", error=str(exc))
         return tool_error("check_conflict", f"LLM judge call failed: {exc}")
 
-    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    lines = [l.strip() for l in raw.splitlines() if l.strip()] if raw else []
     verdict = lines[0].lower() if lines else "insufficient"
     if verdict not in ("agrees", "conflicts", "insufficient"):
         verdict = "insufficient"
