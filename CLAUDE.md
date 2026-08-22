@@ -153,16 +153,24 @@ answer: one `conflict-docs` run called 4 tools where the case allowed 3.
 Its answer was correct ("the code actually does three retries over a much
 shorter window [ev_...] rather than five over 24 hours [ev_...]").
 
-**A/B against the old `deepseek-v4-flash` on the identical base set** —
-this is the important part, because it inverts the assumption behind the
-question. The old model was not more accurate, it was **less**: repeated
-`abstained: true` on questions it had evidence for, empty first-round
-plans (the documented bug), and "I wasn't able to compose a reliable
-answer from the evidence I found" — the compose-JSON parse failure —
-across S2, S3 and even the trivial `list_accounts` case, at 13-48s per
-run. The latency work did not trade accuracy for speed; the slow model
-was ALSO the unreliable one, and its unreliability was mostly invisible
-before because it surfaced as a plausible-looking abstention.
+**A/B against the old `deepseek-v4-flash` on the identical base set**:
+**0/8 runs passed** before I stopped it (2.9-54.9s per run — the run
+itself was taking minutes). Failure modes were the ones already
+documented above: empty first-round plans (S1 #2, S2 #1 called NO tools
+at all and abstained), and "I wasn't able to compose a reliable answer
+from the evidence I found" — the compose-JSON parse failure — on S2, S3
+and even the trivial `list_accounts` case. The one run that did answer
+(S1 #1, 18.1s) missed the secret-rotation half of the answer.
+
+**Caveat on that A/B, stated plainly**: it is not a clean model-only
+comparison. Both arms ran the NEW prompts (single-line JSON, 35-word cap,
+shortest-substring claims), so some of deepseek's compose failures may be
+that model reacting badly to the tightened output format rather than a
+pre-existing weakness — though the empty-plan and compose-parse bugs were
+both documented against it BEFORE any of this work. The defensible claim
+is narrow and sufficient: **the current model+prompt combination is
+accurate on this eval and the old one is not**, so the latency work did
+not trade accuracy away.
 
 **What this does NOT prove**: the corpus is a fixture, so these numbers
 measure the loop's behaviour on known-answer questions, not open-domain
