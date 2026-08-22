@@ -13,6 +13,7 @@ from app.models import User, LearningPathCache  # ensure tables are registered b
 from app.routers import repos, jobs, query, graph, annotations, files
 from app.routers import auth
 from app.routers import onboarding
+from app.routers import tools
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -111,6 +112,7 @@ app.include_router(annotations.router,  prefix="/api/annotations", tags=["annota
 app.include_router(files.router,        prefix="/api/files",       tags=["files"])
 app.include_router(auth.router,         prefix="/api/auth",        tags=["auth"])
 app.include_router(onboarding.router,   prefix="/api/repos",       tags=["onboarding"])
+app.include_router(tools.router,        prefix="/api/tools",       tags=["tools"])  # unauthenticated for the demo, see CLAUDE.md
 
 
 # ─── WebSocket endpoint ───────────────────────────────────────────────────────

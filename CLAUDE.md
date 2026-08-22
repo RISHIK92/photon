@@ -7,10 +7,81 @@ references to `services/brain-api` mean `server/`; all references to
 
 ## Current phase
 
-**Phase 1 — Seed corpus.** Phase 0 (environment) is complete except for the
-manual two-person LiveKit transport test (see checklist below — not a
-blocker for Phase 1/2 work). The Meridian seed corpus is written at
-`server/app/seed/data/`:
+**Phase 2 — Tool layer.** Phase 0 (environment) is complete except for the
+manual two-person LiveKit transport test (not a blocker for Phase 1/2/3
+work). Phase 1 (seed corpus) is complete and passed its acceptance test
+(5/5 off-script questions hit real evidence). Phase 2 status below.
+
+### Phase 2 — tool layer (done)
+
+- `app/seed/loader.py` — `ensure_repo_ingested()` runs the Meridian repo
+  through the normal ingestion pipeline (Postgres `Repo`/`Job`, Neo4j module
+  graph, `code_chunks` Qdrant collection) — idempotent, looks up by repo
+  name `meridian-api` before re-ingesting. `embed_knowledge_base()` embeds
+  `docs/` (12 files — **`CONFLICTS.md` is deliberately excluded**, see
+  below), `tickets.jsonl`, `slack.jsonl` into three separate Qdrant
+  collections (`kb_docs`, `kb_tickets`, `kb_slack`) via `embed_texts`.
+  `load_accounts/commits/prs/tickets/logs/incidents/slack()` are plain
+  cached JSON/JSONL readers for the deterministic tools.
+  Run once per fresh stack: `python3 -c "from app.seed.loader import
+  load_all; print(load_all())"` from `server/` (venv activated) — ingestion
+  takes ~15s, KB embedding ~15s.
+- `app/tools/evidence.py` — `make_evidence()`/`tool_result()`/`tool_error()`
+  are the ONLY place the Section-4 evidence/tool-result shape is built. Every
+  tool in `code.py`/`knowledge.py`/`tenant.py`/`provenance.py`/`conflict.py`
+  goes through these — don't hand-build the dict shape elsewhere.
+- `app/tools/code.py` — `search_code`, `trace_symbol`, `find_usages`,
+  `read_file`, all wrapping the existing `vector_search`/`hybrid_retrieve`
+  internals. Qdrant payloads don't carry a real cosine score (dropped in
+  `context_assembler.py` too) — `_rank_score()` approximates a descending
+  score from result order.
+- `app/tools/knowledge.py` — `search_docs`, `search_tickets` (optional
+  `account_id` filter), `search_slack` (optional `channel` filter).
+- `app/tools/tenant.py` — `get_account` (secrets redacted to last 4 chars),
+  `get_account_logs`, `get_incidents`, `list_accounts`. All deterministic
+  JSON reads, no vector search — this is why S1 answers are exact.
+  `get_incidents(account_id=...)` cross-references `related_tickets` against
+  that account's tickets, then falls back to matching the account's first
+  name-word or id in the incident text — matching the literal account_id or
+  full account name against incident prose was too strict and silently
+  returned nothing (caught and fixed while testing).
+- `app/tools/provenance.py` — `explain_why(symbol_or_path, repo_id)`: code
+  → commit (via `files` list) → ticket (`MER-\d+` regex on commit message)
+  → PR (commit hash or ticket id in description) → Slack thread (keyword-
+  scored match to find the root, then all messages sharing its
+  `thread_ts`). Verified end-to-end on `app/pricing.py`: returns the full
+  MER-412 chain down to all 12 messages in the `#pricing` thread. Any hop
+  that can't be found stops the chain there with a `note` — never guesses.
+- `app/tools/conflict.py` — `check_conflict(claim, repo_id)`: top-1
+  `search_docs` + top-1 `search_code`, one narrow LLM judgment
+  (agrees/conflicts/insufficient + <20-word reason), folded into `note`
+  (the tool contract has no extra top-level keys). **Gotcha**: `gemini-2.5-
+  flash` burns hidden reasoning tokens against `max_output_tokens` — 150 was
+  silently truncating the answer mid-sentence; needed 1500 to reliably leave
+  room for ~2 visible lines. Verified stable "conflicts" verdict on the
+  retry-policy question and "agrees" on the secret-rotation question across
+  repeated calls.
+- `app/tools/registry.py` + `app/routers/tools.py` — `GET /api/tools` (schema
+  list) and `POST /api/tools/{name}` (`{"args": {...}}` body), mounted
+  unauthenticated at `/api/tools` in `main.py` per the plan's demo-scope
+  auth decision. All 13 tools curl-tested individually, plus the unknown-
+  tool (404) and missing-required-arg (422) error paths.
+
+**Bug caught and fixed during testing**: `CONFLICTS.md` was initially
+embedded into `kb_docs` like a real product doc. Since it accurately
+narrates what the code does (that's its whole purpose), `check_conflict`
+would sometimes retrieve it as the "docs" side and correctly report
+"agrees" — silently defeating the S3 scenario. Fixed in `loader.py` by
+excluding it from `embed_docs()`; stale embedded copy purged from Qdrant.
+If `embed_docs(force=True)` is ever re-run, double check `CONFLICTS.md`
+didn't sneak back in.
+
+Not built yet: `app/agent/` (Phase 3 — the planning loop that calls these
+tools and composes a cited answer) and `services/call-agent/` (Phase 4).
+
+## Seed corpus (Phase 1)
+
+The Meridian seed corpus is written at `server/app/seed/data/`:
 
 - `repo/` — ~20-file FastAPI codebase (`meridian-api`). Load-bearing files:
   `app/pricing.py` (S2 — the unexplained Bangalore partner-rate branch),
@@ -40,10 +111,6 @@ blocker for Phase 1/2 work). The Meridian seed corpus is written at
   logs/incidents/accounts). Hand-authored load-bearing fixtures are inline
   in the script; re-running overwrites output, so diff before re-running if
   anything's been hand-edited since.
-
-Not built yet: the loader that embeds this into Qdrant/Neo4j/Postgres
-(`app/seed/loader.py`, Phase 2) and the tool layer that reads it
-(`app/tools/`, Phase 2).
 
 ### Phase 0 checklist status
 - [x] `GEMINI_API_KEY` and `VOYAGE_API_KEY` present in `server/.env`
