@@ -109,6 +109,67 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Eval — is it still accurate after the latency work? (`server/evals/`)
+
+The user pushed back on the latency result: fast is worthless if tool
+selection got worse. Fair — the latency commit's evidence was 12
+happy-path runs. So there is now a real eval harness,
+**`server/evals/agent_eval.py`**, run it before trusting any change to
+the model, the prompts, or the tool-selection guidance:
+
+```
+cd server && .venv/bin/python evals/agent_eval.py <model> [trials]
+HARD=1 .venv/bin/python evals/agent_eval.py <model> [trials]
+```
+
+The model is a CLI arg rather than read from config specifically so two
+models can be A/B'd on identical cases. Four things are scored per run,
+independently: **tools** (did the planner call what the question needs,
+and not a pile of extras), **content** (does the answer contain the known
+ground truth from the seed corpus, and none of the known WRONG answers —
+e.g. the documented "Bangalore isn't a special case" regression is a
+literal `forbid` string), **abstain** (did it abstain exactly when it
+should), **cites** (is every `[ev_xxx]` marker a real id from that turn —
+a fabricated locator is a build-breaking bug, per the standing rule).
+
+Two case sets. The base set is the demo scenarios. The HARD set exists
+because the base set is written English and **a voice agent never gets
+written English** — it includes unpunctuated lowercase ASR output, a
+disfluent transcript ("uh so the webhooks for north wind are failing can
+you check"), an account referenced only indirectly ("our Mumbai
+customer"), a customer that doesn't exist (must abstain, not invent),
+ambient small talk that open-mic will pick up mid-call, and a question
+whose answer is nowhere in the corpus.
+
+**Results — `gemini-3.5-flash-lite` (the new, fast model):**
+
+| set | runs | tools | content | abstain | cites | all | median |
+|---|---|---|---|---|---|---|---|
+| base | 24 | 24/24 | 24/24 | 24/24 | 24/24 | **24/24** | 2216ms |
+| hard | 16 | 15/16 | 16/16 | 16/16 | 16/16 | **15/16** | 2288ms |
+
+The single flag was an over-strict threshold in the eval, not a bad
+answer: one `conflict-docs` run called 4 tools where the case allowed 3.
+Its answer was correct ("the code actually does three retries over a much
+shorter window [ev_...] rather than five over 24 hours [ev_...]").
+
+**A/B against the old `deepseek-v4-flash` on the identical base set** —
+this is the important part, because it inverts the assumption behind the
+question. The old model was not more accurate, it was **less**: repeated
+`abstained: true` on questions it had evidence for, empty first-round
+plans (the documented bug), and "I wasn't able to compose a reliable
+answer from the evidence I found" — the compose-JSON parse failure —
+across S2, S3 and even the trivial `list_accounts` case, at 13-48s per
+run. The latency work did not trade accuracy for speed; the slow model
+was ALSO the unreliable one, and its unreliability was mostly invisible
+before because it surfaced as a plausible-looking abstention.
+
+**What this does NOT prove**: the corpus is a fixture, so these numbers
+measure the loop's behaviour on known-answer questions, not open-domain
+accuracy. Tool selection is stable across the 40 runs here; it is not
+guaranteed for question shapes nobody has written a case for. Add a case
+when a new failure mode shows up — that's what the file is for.
+
 ### Fix — turn latency: 39.2s -> 2.4s median (LLM was 97% of it)
 
 The trace panel above immediately paid for itself: it showed a real S2
