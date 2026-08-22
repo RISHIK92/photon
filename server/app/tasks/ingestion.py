@@ -190,7 +190,11 @@ def run_ingestion(self, repo_id: str, job_id: str):
                 for imp in parsed.imports:
                     resolved = _resolve_import(imp, rel_path, language)
                     if resolved:
-                        log.info("import.resolved", from_path=rel_path, to=resolved, raw=imp, language=language)
+                        # debug, not info: this fires once per resolved
+                        # import — 5,366 times for an 83-file repo — and
+                        # every line is formatted and written through
+                        # Celery's logging on the critical path.
+                        log.debug("import.resolved", from_path=rel_path, to=resolved, raw=imp, language=language)
                         loop.run_until_complete(
                             graph.upsert_import_edge(module_id, resolved, repo_id)
                         )
