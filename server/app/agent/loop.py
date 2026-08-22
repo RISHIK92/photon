@@ -5,14 +5,17 @@ standalone with just a question string (see tests/test_agent_loop.py).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 
 import structlog
 
 from app.agent.llm import extract_json, generate
 from app.agent.prompts import build_compose_prompt, build_plan_prompt
+from app.core.llm.vision import describe_screen
 from app.agent.verifier import verify
 from app.seed.loader import get_seed_repo_id
+from app.tools.evidence import make_evidence
 from app.tools.registry import TOOL_SCHEMAS, UnknownToolError, dispatch
 
 log = structlog.get_logger()
@@ -61,9 +64,24 @@ def _no_evidence_abstention(tool_trace: list[dict]) -> str:
     return f"I don't have evidence for that. I checked {tools_tried} and found nothing relevant to your question."
 
 
-async def answer_question(question: str, repo_id: str | None = None, screen_context: str | None = None) -> dict:
+async def answer_question(
+    question: str,
+    repo_id: str | None = None,
+    screen_context: str | None = None,
+    screen_image_bytes: bytes | None = None,
+) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
-    escalation, tool_trace}. Safe to call with no call/session in progress."""
+    escalation, tool_trace}. Safe to call with no call/session in progress.
+
+    screen_image_bytes: a JPEG screen-share frame, if the customer is
+    sharing their screen and the question plausibly needs it (caller —
+    call-agent's orchestrator — decides that, not this function). Analyzed
+    once via Gemini vision (app.core.llm.gemini_vision) and folded into
+    the evidence set as a citable "screen" source_type item, exactly like
+    a tool result — NOT passed to the LLM as raw unverifiable prose, so
+    the same "no uncited claim" rule applies to what the customer sees on
+    screen as to everything else.
+    """
     if repo_id is None:
         repo_id = get_seed_repo_id()
 
@@ -71,6 +89,22 @@ async def answer_question(question: str, repo_id: str | None = None, screen_cont
     tool_trace: list[dict] = []
     context_log = ""
     total_calls = 0
+
+    if screen_image_bytes:
+        start = time.monotonic()
+        description = await describe_screen(screen_image_bytes, question)
+        ms = int((time.monotonic() - start) * 1000)
+        if description:
+            frame_hash = hashlib.sha1(screen_image_bytes).hexdigest()[:10]
+            screen_evidence = make_evidence("screen", f"screen:{frame_hash}", description, 1.0)
+            all_evidence.append(screen_evidence)
+            tool_trace.append({"tool": "describe_screen", "args": {}, "ms": ms, "evidence": [screen_evidence]})
+            screen_context = description
+        else:
+            tool_trace.append(
+                {"tool": "describe_screen", "args": {}, "ms": ms, "evidence": [], "note": "vision call failed"}
+            )
+            screen_context = None
 
     for round_num in range(MAX_ROUNDS):
         remaining = MAX_TOOL_CALLS_TOTAL - total_calls
@@ -137,7 +171,7 @@ async def answer_question(question: str, repo_id: str | None = None, screen_cont
             "tool_trace": tool_trace,
         }
 
-    compose_prompt = build_compose_prompt(question, dedup_evidence, screen_context)
+    compose_prompt = build_compose_prompt(question, dedup_evidence)
     raw_composed = await generate(compose_prompt, max_output_tokens=1500, temperature=0.1, json_mode=True)
     composed = extract_json(raw_composed) or {
         "answer": "I wasn't able to compose a reliable answer from the evidence I found.",

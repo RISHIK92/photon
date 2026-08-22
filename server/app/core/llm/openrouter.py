@@ -1,12 +1,15 @@
 """OpenRouter chat-completions client (OpenAI-compatible). This is the text-
-generation provider for the agent loop, check_conflict, and the web
-console's /api/query streaming — see app.config.Settings for why Gemini
-text generation was dropped (its free tier is capped at 20 requests/DAY,
-nowhere near enough). Gemini stays configured separately for vision/image
-use (gemini_vision_model) once Phase 4 needs it.
+generation AND vision provider for the agent loop, check_conflict, screen-
+frame analysis, and the web console's /api/query streaming — see
+app.config.Settings for why Gemini's direct API was dropped for both (its
+free tier is capped at 20 requests/DAY, nowhere near enough — confirmed to
+hit the same wall for the vision model too, not just text, when screen-
+share analysis was first wired up). `google/gemini-3.7-flash` is still the
+model in use for vision, just routed through OpenRouter's billing instead
+of a Gemini API key directly — same model, no quota trap.
 
 Deliberately provider-specific rather than hidden behind an abstraction —
-there's exactly one text provider in use, and an interface for a
+there's exactly one text/vision provider in use, and an interface for a
 hypothetical second one would be unused generality.
 """
 from __future__ import annotations
@@ -67,6 +70,42 @@ def sync_chat(prompt: str, max_tokens: int = 1500, temperature: float = 0.1, jso
     choices = data.get("choices") or []
     if not choices:
         log.warning("openrouter.no_choices", data=data)
+        return ""
+    return (choices[0].get("message", {}).get("content") or "").strip()
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    stop=stop_after_attempt(2),
+    reraise=True,
+)
+def sync_chat_vision(prompt: str, image_bytes: bytes, max_tokens: int = 300, temperature: float = 0.1) -> str:
+    """Blocking call with one image attached (OpenAI-compatible image_url
+    content part, base64 data URI). Run in a thread executor from async code."""
+    import base64
+
+    b64 = base64.b64encode(image_bytes).decode()
+    body = {
+        "model": settings.openrouter_vision_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ],
+            }
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    response = httpx.post(_URL, headers=_headers(), json=body, timeout=60.0)
+    response.raise_for_status()
+    data = response.json()
+    choices = data.get("choices") or []
+    if not choices:
+        log.warning("openrouter.vision_no_choices", data=data)
         return ""
     return (choices[0].get("message", {}).get("content") or "").strip()
 

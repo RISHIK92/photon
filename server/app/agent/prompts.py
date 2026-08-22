@@ -143,11 +143,16 @@ def build_plan_prompt(question: str, context: str, screen_context: str | None) -
     )
 
 
-def build_compose_prompt(question: str, evidence: list[dict], screen_context: str | None) -> str:
-    screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
+def build_compose_prompt(question: str, evidence: list[dict]) -> str:
+    # No separate screen_context here on purpose: a screen-frame description
+    # is folded into `evidence` as a citable ("screen" source_type) item by
+    # app.agent.loop, exactly like a tool result. Passing it a second time
+    # as free-floating "context" would invite the model to treat it as
+    # something it doesn't need to cite — same "no uncited claim" rule
+    # applies to what's on screen as to everything else.
     return _COMPOSE_PROMPT.format(
         system_rules=SYSTEM_RULES,
         question=question,
-        screen_context_block=screen_block,
+        screen_context_block="",
         evidence_block=_format_evidence(evidence),
     )

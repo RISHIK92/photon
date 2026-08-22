@@ -8,7 +8,18 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 
-VALID_SOURCE_TYPES = {"code", "docs", "ticket", "slack", "account", "log", "commit", "pr", "incident"}
+VALID_SOURCE_TYPES = {
+    "code",
+    "docs",
+    "ticket",
+    "slack",
+    "account",
+    "log",
+    "commit",
+    "pr",
+    "incident",
+    "screen",  # a live screen-share frame description (app.agent.loop), not corpus evidence
+}
 
 
 def _make_id(source_type: str, locator: str) -> str:

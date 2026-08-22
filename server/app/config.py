@@ -45,19 +45,22 @@ class Settings(BaseSettings):
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
 
-    # Gemini — vision only (image/screen-frame analysis, Phase 4). All text
-    # generation moved to OpenRouter (openrouter_chat_model below) after
-    # this key's free tier turned out to be capped at 20 requests/DAY for
-    # gemini-2.5-*, nowhere near enough for the agent loop's plan+compose
-    # calls or the web console's query streaming.
+    # Gemini — unused. Kept only because the key is already in .env; every
+    # actual LLM call (text AND vision) goes through OpenRouter below.
+    # Gemini's own free tier is capped at 20 requests/DAY, confirmed to hit
+    # that wall on BOTH the text model (gemini-2.5-*, Phase 3) and the
+    # vision model (gemini-3.7-flash, screen-frame analysis) — nowhere near
+    # enough for a live call. Don't route anything through this key again
+    # without a paid tier.
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     gemini_chat_model: str = "gemini-2.5-pro"
-    gemini_vision_model: str = "gemini-3.7-flash"
 
     # OpenRouter — text generation (agent plan/compose, check_conflict judge,
-    # web console query streaming). See note above.
+    # web console query streaming) AND vision (screen-frame analysis). See
+    # note above for why both live here instead of on Gemini directly.
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_chat_model: str = "deepseek/deepseek-v4-flash-0731"
+    openrouter_vision_model: str = "google/gemini-3.7-flash"
 
     # Voyage AI (embeddings)
     voyage_api_key: str = Field(default="", alias="VOYAGE_API_KEY")

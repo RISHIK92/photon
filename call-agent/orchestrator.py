@@ -13,6 +13,7 @@ the agent as if they were questions for it.
 """
 from __future__ import annotations
 
+import base64
 import re
 import time
 from dataclasses import dataclass, field
@@ -24,8 +25,14 @@ from adapters.base import TransportAdapter
 
 log = structlog.get_logger()
 
+# Broadened after the original pattern missed a real utterance ("check my
+# screen and help me open the search bar?") — "check/look at my screen",
+# "share my screen", "help me find/open/see", "what's on (my) screen" all
+# now match, not just the original narrow "where do i"/"this screen" set.
 VISUAL_HINT_RE = re.compile(
-    r"\b(where do i|i can'?t find|this screen|on my screen|on the screen)\b", re.IGNORECASE
+    r"\b(where do i|i can'?t find|this screen|(on|check|look at|share|see) (my |the )?screen"
+    r"|what'?s on (my |the )?screen|help me (find|open|see|locate))\b",
+    re.IGNORECASE,
 )
 
 
@@ -72,18 +79,18 @@ class Orchestrator:
         return bool(VISUAL_HINT_RE.search(question)) and self.state.latest_screen_frame is not None
 
     async def _handle_turn(self, question: str) -> None:
-        screen_context = None
+        screen_image_b64 = None
         if self._wants_visual_context(question):
-            # Frame -> vision-model description isn't wired up yet (Phase 4
-            # cut order: screen share/vision is first to go, S1-S3 all work
-            # by voice alone). Note that a frame exists so it shows up in
-            # the tool_trace/logs, but never fabricate a description of it.
-            screen_context = "a screen frame was captured but visual analysis isn't wired up yet"
+            # The brain-api does the actual vision call (app.core.llm.vision,
+            # via OpenRouter) and folds the description into the evidence
+            # set as a citable "screen" item — this orchestrator just hands
+            # over the raw frame, it never fabricates a description itself.
+            screen_image_b64 = base64.b64encode(self.state.latest_screen_frame).decode()
 
         try:
             response = await self._http.post(
                 f"{self.brain_api_url}/api/agent/ask",
-                json={"question": question, "screen_context": screen_context},
+                json={"question": question, "screen_image_base64": screen_image_b64},
             )
             response.raise_for_status()
             result = response.json()

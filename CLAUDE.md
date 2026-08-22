@@ -109,6 +109,76 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Feature — screen-share vision, actually wired up (was a stub since Phase 4)
+
+The user asked to build this. It was previously a deliberate stub —
+`_wants_visual_context` detected a visual question and set
+`screen_context = "a screen frame was captured but visual analysis isn't
+wired up yet"`, and the compose LLM would honestly say it had no screen
+access. Now real:
+
+- **`server/app/tools/evidence.py`** — added `"screen"` to
+  `VALID_SOURCE_TYPES`. A screen-frame description is folded into the
+  evidence set as a real citable item (`source_type: "screen"`,
+  `locator: "screen:{sha1(image_bytes)[:10]}"` — content-addressed so two
+  different frames never collide), exactly like a tool result. This was
+  a deliberate design choice over passing the description as free-text
+  "context": the same "no uncited claim" rule now applies to what's on
+  screen as to everything else, and it gets a real `[ev_xxx]` chip in the
+  evidence panel.
+- **`server/app/agent/loop.py`** — `answer_question()` gained a
+  `screen_image_bytes` param. If present, calls `describe_screen()` once
+  up front, wraps a successful result as evidence (see above), and skips
+  it entirely on failure — never fabricates a description. Also: the
+  `if not dedup_evidence: abstain` early-return now naturally allows a
+  screen-only answer through if the frame was the only evidence gathered.
+- **`server/app/agent/prompts.py`** — `build_compose_prompt()` dropped
+  its `screen_context` parameter entirely; passing the same description
+  twice (once as free-floating "context", once as citable evidence)
+  risked the compose LLM treating the screen half as not needing
+  citation. It's evidence now, full stop.
+- **`server/app/routers/agent.py`** — `AgentAskRequest` gained
+  `screen_image_base64: Optional[str]`, decoded and passed through.
+- **`call-agent/orchestrator.py`** — `_handle_turn` now base64-encodes
+  `state.latest_screen_frame` and sends it as `screen_image_base64`
+  instead of the old stub string. `VISUAL_HINT_RE` was also broadened —
+  the ORIGINAL pattern missed a real utterance from testing ("check my
+  screen and help me open the search bar?"), matching only "where do i" /
+  "this screen" / "on my screen" style phrasing. Now also matches
+  "check/look at/share/see (my/the) screen", "what's on (my/the) screen",
+  and "help me find/open/see/locate".
+
+**Real blocker hit and resolved while building this**: the obvious choice
+was Gemini's direct API (`gemini_vision_model = gemini-3.7-flash`,
+already configured, unused since Phase 3). Testing it directly hit the
+**exact same free-tier quota wall** as Gemini text generation did in
+Phase 3 — confirmed with `ResourceExhausted` after only a handful of
+test calls (some earlier calls that looked like plain `DeadlineExceeded`
+timeouts were very likely the same quota problem manifesting as a hang
+rather than a clean rejection). Fixed the same way Phase 3 fixed it:
+moved vision to OpenRouter too. `google/gemini-3.7-flash` is available
+there — same model, verified directly to work (fast, accurate, correctly
+read text out of a test screenshot) — just billed through OpenRouter
+instead of hitting the Gemini API's free tier. `app/core/llm/
+gemini_vision.py` was deleted; `app/core/llm/vision.py` replaces it,
+calling the new `sync_chat_vision()` in `openrouter.py`. `config.py`'s
+`gemini_api_key`/`gemini_chat_model` are now fully unused (kept only
+because the key is already in `.env`) — **do not route anything through
+Gemini's direct API again without a paid tier**, both the text and vision
+models on that key are confirmed to hit the same 20-req/day wall.
+
+**Verified end to end, live, not just unit-level**: `POST /api/agent/ask`
+with a real screenshot correctly described the exact text in it (a
+search box reading "webhook secret rotation"), the planner intelligently
+also called `search_docs` and connected the screen content to real
+Meridian documentation (signing-secret rotation), and the final answer
+cited both the screen evidence and the doc evidence correctly —
+`confidence: high`, not abstained. Then re-tested through
+`orchestrator.py` directly (mock adapter, real frame bytes, real HTTP
+call to the live brain-api) with the exact phrase that had failed before
+("check my screen and help me open the search bar?") — now gets a real,
+helpful, cited answer instead of "I don't have access to your screen."
+
 ### Fix — planner over-calling tools, plus a wrong-answer regression from fixing it
 
 The user asked to check tool-calling latency, suspecting the planner was
