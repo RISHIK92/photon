@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # Chunk settings
     chunk_max_tokens: int = 512
     embedding_batch_size: int = 100
+    # How many embedding batches to send at once. The work is network-bound
+    # (embedding API + Qdrant), so this is the main lever on ingest time.
+    # Kept modest because the provider rate-limits; raise only with evidence.
+    embedding_concurrency: int = 6
 
     # Query settings
     top_k_vector: int = 10

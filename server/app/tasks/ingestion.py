@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional
 
@@ -246,16 +247,40 @@ def run_ingestion(self, repo_id: str, job_id: str):
 
         publish("embedding", 70, f"Chunked into {len(all_chunks)} segments. Embedding...")
 
-        # Upsert in batches
+        # Upsert in batches, CONCURRENTLY.
+        #
+        # Measured: embedding was ~19s of a ~40s ingest for an 83-file repo,
+        # and every second of it was spent waiting on a network round-trip
+        # to the embedding API and then to Qdrant — ~19 batches, strictly
+        # one after another. The work is I/O-bound, not CPU-bound, so the
+        # GIL is not the limit here and threads are the right tool.
+        #
+        # Concurrency is deliberately modest: the embedding provider rate-
+        # limits, and a failed batch loses that slice of the repo's
+        # searchable content. Per-batch failures are still swallowed and
+        # logged individually, exactly as before, so one bad batch cannot
+        # take down an otherwise good ingest.
         batch_size = settings.embedding_batch_size
-        for i in range(0, len(all_chunks), batch_size):
-            batch = all_chunks[i : i + batch_size]
-            try:
-                upsert_chunks(batch)
-            except Exception as exc:
-                log.error("embed.batch_failed", batch=i, error=str(exc))
-            progress = 70 + int((i / max(len(all_chunks), 1)) * 25)
-            publish("embedding", progress, f"Embedded {min(i + batch_size, len(all_chunks))}/{len(all_chunks)} chunks")
+        batches = [all_chunks[i : i + batch_size] for i in range(0, len(all_chunks), batch_size)]
+        completed = 0
+        if batches:
+            with ThreadPoolExecutor(max_workers=settings.embedding_concurrency) as pool:
+                futures = {pool.submit(upsert_chunks, b): n for n, b in enumerate(batches)}
+                for future in as_completed(futures):
+                    n = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        log.error("embed.batch_failed", batch=n, error=str(exc))
+                    completed += 1
+                    # Progress is now by COMPLETED batches, since they no
+                    # longer finish in order.
+                    progress = 70 + int((completed / len(batches)) * 25)
+                    publish(
+                        "embedding",
+                        progress,
+                        f"Embedded {min(completed * batch_size, len(all_chunks))}/{len(all_chunks)} chunks",
+                    )
 
         # ── Phase 5: Summary card ──────────────────────────────────────────
         publish("finalizing", 97, "Generating summary card...")

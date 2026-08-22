@@ -109,6 +109,121 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+## Phase A — login, workspaces, and real repo ingestion
+
+Moving from a single-tenant demo to something a user logs into and points
+at their own code. Decisions taken with the user: **JWT first then GitHub
+App in the same phase**, **workspace-scoped from day one**, **user picks
+which repos** rather than auto-ingesting a whole org.
+
+### Slice 1 — the workspace tenant boundary (done)
+
+The inherited YASML base already had more than expected: `User`,
+email/password + JWT (`app/core/auth.py`), `Repo.owner_id`, per-user
+list/get/delete, ZIP upload and clone-by-URL. What it did **not** have:
+any org concept, GitHub auth, or an agent that respects any of it —
+`app/agent/` and `app/tools/` contain **zero** references to users or
+ownership, and `answer_question()` still falls back to
+`get_seed_repo_id()`. The client had no login page at all.
+
+- `Workspace` + `WorkspaceMember` models; `Repo.workspace_id`. A user is a
+  login; a workspace is the thing that HAS data and can be shared.
+- `app/core/workspace.py` — `get_current_workspace()` is the single choke
+  point: resolves `X-Workspace-Id` (falling back to the caller's personal
+  workspace) and verifies membership, so routers never re-derive
+  ownership. A personal workspace is created on signup AND on login, so
+  users predating this don't authenticate into nowhere.
+- Non-members get **404, never 403** — a 403 confirms an id exists.
+- `server/tests/test_tenancy.py` — 9 tests, two real users over real HTTP,
+  checking DENIAL: can't list, get or delete another workspace's repo,
+  can't borrow a workspace id, unauthenticated is rejected.
+
+**Postgres, not SQLite** — the user asked whether we should migrate;
+verified live, it's already `PostgreSQL 16.13` via `postgresql+asyncpg`
+from the docker-compose `postgres:16-alpine`. Nothing to do. (The
+`ADD COLUMN IF NOT EXISTS` migration pattern is Postgres-only anyway.)
+
+**No Alembic**: `create_all()` creates missing TABLES but never adds a
+column to an existing one, so every new column needs a line in
+`create_db_and_tables()`. Fine for now; replace with Alembic before the
+data matters.
+
+### Slice 2 — client auth (done)
+
+`client/lib/api.ts` (token + workspace header + 401 handling),
+`/login` (sign in / create account), `/dashboard` (workspace switcher,
+sources, repo list with live status), `AuthGuard`, and root now routes to
+one or the other.
+
+**Next 16 gotcha, caught by reading `node_modules/next/dist/docs/`**:
+middleware is renamed to **`proxy.ts`**. A `middleware.ts` would have
+silently done nothing. Not used in the end anyway — the token lives in
+localStorage, which the server can't read, so the guard is client-side and
+the real enforcement stays server-side (see the tenancy tests).
+
+**Trade-off stated in the code**: localStorage is XSS-readable. The
+hardened version is an httpOnly cookie set by a Next route handler
+proxying the API. This build talks to the brain-api directly from the
+browser, so the token must be reachable from JS.
+
+### Ingest speed — 40.1s -> 16.5s, and it barely grows with repo size
+
+The user pushed back that ~28s for 83 files was too slow (target: 5-15s
+even for a big repo). Measured the phase breakdown rather than guessing:
+
+```
++ 0.0s  clone starts      + 4.0s  clone done (already --depth 1)
++ 4.0s  manifest built    +14.0s  parse + import resolution done   (~10s)
++21.0s  first embedding batch                                      (~7s graph)
++40.0s  complete                                                   (~19s embedding)
+```
+
+Embedding was ~half the wall clock and **strictly sequential** — ~19
+batches, each one network round-trip to the embedding API then Qdrant,
+one after another. Replaced the loop with a `ThreadPoolExecutor`
+(`settings.embedding_concurrency = 6`); the work is I/O-bound so the GIL
+isn't the constraint. Per-batch error handling is unchanged, so one bad
+batch still can't sink an ingest.
+
+| repo | files | before | after |
+|---|---|---|---|
+| psf/requests | 83 | 40.1s | **16.5s** |
+| httpie/cli | 236 | 56-62.8s | **17.3s** |
+
+Zero `embed.batch_failed`, and verified the result is *correct*, not just
+fast: `search_code` on the freshly ingested repo returns real chunks with
+real locators. Note the new shape — **tripling the file count now adds
+under a second**, because what's left is fixed cost (clone, parse, graph).
+A `log.info("import.resolved")` firing 5,366 times per ingest was also
+dropped to debug; measurably it was not the bottleneck.
+
+### Estimated ingest time, calibrated from measurement
+
+The user asked to show users how long importing N repos will take.
+`app/services/estimate.py` + `POST /api/repos/estimate`:
+
+- **Measured, not guessed** — seeds come from the runs above, and every
+  ingest now records `Repo.ingest_seconds`, so after
+  `MIN_SAMPLES_TO_CALIBRATE` (5) real imports the model re-fits to THIS
+  deployment (least-squares on files -> seconds, with sanity guards for
+  degenerate or nonsensical fits).
+- **A range, never a single number** (0.7x-1.6x): ingest time varies with
+  network and embedding-API latency, and false precision would be worse
+  than a wide answer. Current output: 1 repo `10s-25s`, 5 repos
+  `60s-2 min`, 20 repos `4 min-9 min`.
+- The response carries `calibrated` and `sample_size` so the UI can say
+  "estimated from N previous imports" rather than implying confidence it
+  doesn't have.
+
+**Honest limitation recorded in the module**: the two calibration repos
+are close in size, so the slope is poorly determined and extrapolating to
+a 5,000-file monorepo is not supported by this data.
+
+**Measurement caveat**: a 5-repo concurrent calibration run gave much
+worse per-repo numbers (40-81s) than solo runs, because the workers
+contend. Estimates are built from solo measurements; concurrent imports
+will be slower than predicted.
+
 ### Live — Sarvam switched on for the whole voice stack (STT + TTS)
 
 `call-agent/.env` now sets `VOICE_STACK=sarvam` with the real

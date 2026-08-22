@@ -13,12 +13,21 @@ commitment. Two rules:
 
 Model: `seconds ≈ FIXED_OVERHEAD + PER_FILE * files`.
 
-Seed calibration (measured on this machine, Aug 2026):
-    psf/requests    83 files -> 29.5s
-    httpie/cli     236 files -> 56.0s
-which fits ≈ 15s fixed + 0.17s/file. The fixed part is clone + graph
-setup; the per-file part is dominated by embedding calls, so it moves with
-the embedding provider more than with parser speed.
+Seed calibration (measured on this machine, Aug 2026, AFTER embedding was
+parallelised — the earlier sequential numbers were 29.5s and 56.0s):
+    psf/requests    83 files -> 16.5s
+    httpie/cli     236 files -> 17.3s
+which fits ≈ 16s fixed + 0.005s/file.
+
+That shape is the interesting part: with embedding batches now running
+concurrently, ingest time is almost entirely FIXED cost (clone, parse,
+graph build) and barely moves with repo size — tripling the file count
+added under a second.
+
+Caveat worth keeping: those two repos are close in size, so the slope is
+poorly determined and extrapolating to a 5,000-file monorepo is not
+supported by this data. That is exactly why the answer is a wide range and
+why `Repo.ingest_seconds` keeps accumulating real samples.
 """
 from __future__ import annotations
 
@@ -26,8 +35,8 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 # Fallback constants, used until this deployment has its own measurements.
-SEED_FIXED_OVERHEAD = 15.0
-SEED_PER_FILE = 0.17
+SEED_FIXED_OVERHEAD = 16.0
+SEED_PER_FILE = 0.005
 
 # GitHub reports repo size in KB, not files. Measured against the same two
 # repos, ~14 KB of checked-out source per parsed file is a workable rough
