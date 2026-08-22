@@ -109,6 +109,45 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Change — dropped the "Photon" wake word, open mic by explicit request
+
+After the HTTP-client fix above, the user re-tested and reported the
+agent still only responded to the initial greeting, nothing else. The
+actual log line: they said **"Hello. How are you?"** — no wake word.
+`orchestrator.py`'s original design (build plan Phase 4: "explicit
+address, not open mic") only forwarded a turn that literally started with
+"Photon" — that gate was working exactly as designed, it just wasn't
+what they expected in the moment.
+
+The user then explicitly asked to drop the wake word entirely: "dont
+need any wakeup word let it start the communication." Done —
+`orchestrator.on_speech` now forwards every finalized turn to the brain-
+api unconditionally, no gating. `WAKE_WORD_RE` and the wake-word-strip
+logic are removed. The client header text (`client/app/call/page.tsx`)
+updated to match ("no wake word needed" instead of "say Photon").
+
+**Trade-off now in effect, worth knowing**: with no wake word, side
+comments, talking to someone else on the call, or ambient chatter all get
+sent to the agent as if they were real questions. The "abstain over
+guess" rule still applies, so irrelevant chatter should produce a clean
+abstention rather than a fabricated answer (verified: "Hello. How are
+you?" through the open-mic path now correctly returns "I don't have
+evidence for that..." rather than inventing small talk) — but it does
+mean the agent evaluates every utterance, which costs a real API call
+each time and could talk over a live conversation if someone's mid-
+sentence about something unrelated. If that proves noisy in practice,
+reintroducing a lighter-weight local gate (e.g. only calling the brain-api
+for utterances that look like questions) would be the next place to look
+— not done here since it wasn't asked for.
+
+Also fixed while making this change: the still-running-from-the-previous-
+fix-test worker had to be restarted and the agent re-dispatched into the
+live `photon` room via LiveKit's Agent Dispatch API (same situation as
+the previous fix — killing the worker process drops its agent
+participant, and an already-active room doesn't automatically get a new
+one), so the room the user is testing in was continuously fixed forward
+rather than requiring them to leave and rejoin.
+
 ### Fix — the worker closed its own HTTP client right after startup
 
 The user reported audio/TTS not working and asked to check the logs.

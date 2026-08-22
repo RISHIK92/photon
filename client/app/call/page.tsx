@@ -98,8 +98,8 @@ export default function CallPage() {
       <header className="border-b border-neutral-800 px-6 py-4 shrink-0">
         <h1 className="text-lg font-semibold">Meridian support call</h1>
         <p className="text-sm text-neutral-400">
-          Talk to Photon, Meridian&apos;s support agent — say &quot;Photon&quot; to get its
-          attention, or use the text box on the right if audio isn&apos;t working.
+          Talk to Photon, Meridian&apos;s support agent — it&apos;s listening the whole time,
+          no wake word needed. Use the text box on the right if audio isn&apos;t working.
         </p>
       </header>
 

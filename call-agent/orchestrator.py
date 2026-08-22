@@ -1,12 +1,15 @@
 """Platform-blind session orchestrator: turn state, rolling transcript,
-latest screen frame, explicit-address gating, and the HTTP call out to the
-Company Brain (server/app/agent, via POST /api/agent/ask). Implements
-SessionCallbacks (adapters/base.py) — a concrete adapter calls into this;
-this module never imports a concrete adapter, only the base contract.
+latest screen frame, and the HTTP call out to the Company Brain
+(server/app/agent, via POST /api/agent/ask). Implements SessionCallbacks
+(adapters/base.py) — a concrete adapter calls into this; this module never
+imports a concrete adapter, only the base contract.
 
-Explicit address, not open mic (build plan Phase 4): the agent only acts
-on a turn that starts with the wake word "Photon". This sidesteps turn-
-detection ambiguity and stops the agent talking over a live presenter.
+Open mic, not explicit address: every finalized user turn is treated as
+addressed to the agent (per explicit user instruction — the build plan's
+original Phase 4 design used a "Photon" wake word instead; that's been
+dropped here). Trade-off worth knowing: with no wake word, side comments,
+talking to someone else on the call, or ambient chatter all get sent to
+the agent as if they were questions for it.
 """
 from __future__ import annotations
 
@@ -21,7 +24,6 @@ from adapters.base import TransportAdapter
 
 log = structlog.get_logger()
 
-WAKE_WORD_RE = re.compile(r"^\s*photon[,:]?\s*", re.IGNORECASE)
 VISUAL_HINT_RE = re.compile(
     r"\b(where do i|i can'?t find|this screen|on my screen|on the screen)\b", re.IGNORECASE
 )
@@ -56,11 +58,7 @@ class Orchestrator:
         self.state.transcript.append({"speaker_id": speaker_id, "text": text, "ts": time.time()})
         log.info("orchestrator.speech_finalized", speaker_id=speaker_id, text=text)
 
-        addressed, question = self._strip_wake_word(text)
-        if not addressed:
-            return
-
-        await self._handle_turn(question)
+        await self._handle_turn(text)
 
     async def on_frame(self, image: bytes, source: str) -> None:
         if source != "screen":
@@ -69,14 +67,6 @@ class Orchestrator:
         self.state.latest_screen_frame_at = time.time()
 
     # ── internals ─────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _strip_wake_word(text: str) -> tuple[bool, str]:
-        m = WAKE_WORD_RE.match(text)
-        if not m:
-            return False, text
-        remainder = text[m.end() :].strip()
-        return True, remainder or text
 
     def _wants_visual_context(self, question: str) -> bool:
         return bool(VISUAL_HINT_RE.search(question)) and self.state.latest_screen_frame is not None
