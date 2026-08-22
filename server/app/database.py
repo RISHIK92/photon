@@ -43,3 +43,6 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_repos_workspace_id ON repos (workspace_id)"
         ))
+        await conn.execute(text(
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS ingest_seconds DOUBLE PRECISION"
+        ))

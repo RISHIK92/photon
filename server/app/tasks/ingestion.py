@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -65,6 +66,7 @@ def run_ingestion(self, repo_id: str, job_id: str):
     5. Chunk + embed → Qdrant
     6. Update summary card
     """
+    started_at = time.monotonic()
     r = redis.from_url(settings.redis_url)
     engine = get_sync_engine()
 
@@ -260,6 +262,8 @@ def run_ingestion(self, repo_id: str, job_id: str):
             _update_repo(
                 s, repo_id,
                 status=RepoStatus.READY,
+                # Feeds the pre-import time estimate; see services/estimate.py.
+                ingest_seconds=round(time.monotonic() - started_at, 1),
                 file_count=file_count,
                 function_count=total_functions,
                 language_breakdown=lang_breakdown,
@@ -275,7 +279,12 @@ def run_ingestion(self, repo_id: str, job_id: str):
             )
 
         publish("done", 100, "Ingestion complete! Repository is ready.")
-        log.info("ingestion.complete", repo_id=repo_id, files=file_count)
+        log.info(
+            "ingestion.complete",
+            repo_id=repo_id,
+            files=file_count,
+            seconds=round(time.monotonic() - started_at, 1),
+        )
 
     except Exception as exc:
         log.error("ingestion.failed", repo_id=repo_id, error=str(exc))

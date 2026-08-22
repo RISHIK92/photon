@@ -118,6 +118,11 @@ class RepoBase(SQLModel):
     # FIX: Replaced List[str] with list[str]
     most_imported: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     error_message: Optional[str] = None
+    # How long ingestion actually took, in seconds. Recorded so the
+    # "this will take about N minutes" estimate shown before importing
+    # repos is calibrated from THIS deployment's real measurements rather
+    # than a number someone guessed once (see app/services/estimate.py).
+    ingest_seconds: Optional[float] = None
 
 
 class Repo(RepoBase, table=True):

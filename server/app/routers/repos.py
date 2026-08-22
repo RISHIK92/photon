@@ -6,7 +6,7 @@ import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select
+from sqlmodel import SQLModel, select
 
 from app.database import get_session
 from app.models import Repo, RepoCreate, RepoRead, RepoStatus, RepoSourceType, Job, User, Workspace
@@ -14,9 +14,54 @@ from app.config import get_settings
 from app.tasks.ingestion import run_ingestion
 from app.core.auth import get_current_user
 from app.core.workspace import get_current_workspace
+from app.services.estimate import estimate as compute_estimate, files_from_size_kb
 
 router = APIRouter()
 settings = get_settings()
+
+
+class EstimateRequest(SQLModel):
+    """Either exact file counts (if we already know them) or GitHub's
+    repo size in KB (all we have before cloning)."""
+    file_counts: list[int] = []
+    size_kb: list[int] = []
+
+
+@router.post("/estimate")
+async def estimate_ingest_time(
+    payload: EstimateRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """How long importing these repos will take, as a RANGE.
+
+    Calibrated from ingests already completed on this deployment, so the
+    number reflects this machine, this embedding provider and this network
+    rather than a constant written once. Samples are drawn across all
+    repos on purpose: this measures the pipeline's speed, not any one
+    tenant's data, and only the fitted range is returned — never another
+    workspace's rows.
+    """
+    result = await session.execute(
+        select(Repo.file_count, Repo.ingest_seconds).where(
+            Repo.ingest_seconds.is_not(None), Repo.file_count > 0
+        )
+    )
+    samples = [(int(f), float(sec)) for f, sec in result.all()]
+
+    counts = list(payload.file_counts) + [files_from_size_kb(kb) for kb in payload.size_kb]
+    est = compute_estimate(counts, samples)
+    return {
+        "range_human": est.human,
+        "seconds_low": est.seconds_low,
+        "seconds_high": est.seconds_high,
+        "repo_count": est.repo_count,
+        "file_count_estimated": est.file_count,
+        # Surfaced so the UI can say "estimated from N previous imports"
+        # instead of implying more confidence than we have.
+        "calibrated": est.calibrated,
+        "sample_size": est.sample_size,
+    }
 
 
 def _may_access(repo: Repo, user: User, workspace: Workspace) -> bool:
