@@ -14,7 +14,10 @@ from typing import Optional
 import httpx
 import redis
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+import tempfile
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -305,3 +308,99 @@ async def resync(
 
     sync_slack.apply_async(args=[install.id])
     return {"syncing": True}
+
+
+# ── Import a Slack export ────────────────────────────────────────────────
+# The path that needs no Slack app at all. See services/slack_export.py for
+# why this exists alongside OAuth rather than instead of it.
+
+# Slack exports of a large workspace get big; this is a guard against
+# filling the disk, not a judgement about what is reasonable to import.
+_MAX_EXPORT_BYTES = 512 * 1024 * 1024
+
+
+async def _save_upload(file: UploadFile) -> str:
+    fd, path = tempfile.mkstemp(suffix=".zip")
+    written = 0
+    with os.fdopen(fd, "wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            written += len(chunk)
+            if written > _MAX_EXPORT_BYTES:
+                out.close()
+                os.unlink(path)
+                raise HTTPException(status_code=413, detail="That export is larger than 512 MB")
+            out.write(chunk)
+    return path
+
+
+@router.post("/export/inspect")
+async def inspect_slack_export(
+    file: UploadFile = File(...),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.MEMBER)),
+):
+    """What's inside the zip, before anything is indexed."""
+    from app.services.slack_export import inspect_export
+
+    path = await _save_upload(file)
+    try:
+        summary = inspect_export(path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not read that as a Slack export: {exc}")
+    finally:
+        os.unlink(path)
+
+    if not summary.get("looks_like_slack_export"):
+        raise HTTPException(
+            status_code=400,
+            detail="That zip doesn't look like a Slack export (no users.json or channel folders)",
+        )
+    return summary
+
+
+@router.post("/export/import")
+async def import_slack_export(
+    file: UploadFile = File(...),
+    channels: str = Form(default=""),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.MEMBER)),
+):
+    """Index selected channels from an export.
+
+    Channels are explicit for the same reason as the OAuth path: importing
+    everything would quietly embed #random and every standup, and the cost
+    and the privacy exposure are both real.
+    """
+    from app.services.slack_export import import_export
+
+    wanted = {c.strip() for c in channels.split(",") if c.strip()} or None
+    path = await _save_upload(file)
+    try:
+        counts = import_export(workspace.id, path, wanted)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Import failed: {exc}")
+    finally:
+        os.unlink(path)
+
+    # Recorded as an installation so the UI can show "Slack: connected"
+    # uniformly, whether it arrived by OAuth or by export.
+    result = await session.execute(
+        select(SlackInstallation).where(
+            SlackInstallation.workspace_id == workspace.id,
+            SlackInstallation.team_id == "export",
+        )
+    )
+    install = result.scalars().first()
+    if not install:
+        install = SlackInstallation(
+            workspace_id=workspace.id,
+            team_id="export",
+            team_name="Imported export",
+            bot_token_encrypted="",  # nothing to call back to; import only
+            installed_by=current_user.id,
+        )
+    install.last_synced_at = datetime.utcnow()
+    session.add(install)
+    await session.commit()
+
+    return {"indexed": counts, "messages": sum(counts.values())}

@@ -133,6 +133,26 @@ def sync_channel(
     if not messages:
         return 0
 
+    return index_messages(workspace_id, channel_id, channel_name, messages, names)
+
+
+def index_messages(
+    workspace_id: str,
+    channel_id: str,
+    channel_name: str,
+    messages: list[dict],
+    names: Optional[dict[str, str]] = None,
+) -> int:
+    """Embed and upsert messages. Shared by the live OAuth sync and the
+    export importer so both produce IDENTICAL points — same locator shape,
+    same deterministic ids, same payload. A separate path for imported data
+    would mean the demo rehearses something the product does not do.
+    """
+    ensure_collection()
+    names = names or {}
+    if not messages:
+        return 0
+
     texts, payloads = [], []
     for m in messages:
         author = names.get(m.get("user", ""), m.get("username") or "unknown")
