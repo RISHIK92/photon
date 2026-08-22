@@ -30,6 +30,10 @@ log = structlog.get_logger()
 # models (bulbul TTS / saaras STT), which is the only way this agent can
 # speak Telugu, Tamil or Hindi at all — deepgram's aura-2-thalia-en is
 # English-only.
+# Deployment-wide fallback. The MEETING's own language_mode overrides it
+# when the worker can fetch the call config — the stack is a per-call
+# decision (an English-only support call wants Deepgram's lower latency; a
+# call with Telugu speakers needs Sarvam), not a property of the server.
 VOICE_STACK = os.environ.get("VOICE_STACK", "deepgram").strip().lower()
 SARVAM_TTS_MODEL = os.environ.get("SARVAM_TTS_MODEL", "bulbul:v3")
 SARVAM_TTS_SPEAKER = os.environ.get("SARVAM_TTS_SPEAKER") or None
@@ -85,16 +89,22 @@ class _InterceptAgent(agents.Agent):
 class LiveKitAdapter:
     """Implements TransportAdapter (speak/cancel_speech/announce)."""
 
-    def __init__(self, ctx: agents.JobContext, callbacks: SessionCallbacks):
+    def __init__(
+        self,
+        ctx: agents.JobContext,
+        callbacks: SessionCallbacks,
+        voice_stack: str | None = None,
+    ):
         self._ctx = ctx
         self._callbacks = callbacks
         self._session: agents.AgentSession | None = None
         self._screen_task: asyncio.Task | None = None
         self._tts = None
         self._tts_language: str | None = None
+        self._voice_stack = (voice_stack or VOICE_STACK).strip().lower()
 
     def _build_stt(self):
-        if VOICE_STACK == "sarvam":
+        if self._voice_stack == "sarvam":
             from livekit.plugins import sarvam
 
             log.info("livekit_adapter.stt", vendor="sarvam", model=SARVAM_STT_MODEL,
@@ -104,7 +114,7 @@ class LiveKitAdapter:
         return deepgram.STT(model="nova-3")
 
     def _build_tts(self):
-        if VOICE_STACK == "sarvam":
+        if self._voice_stack == "sarvam":
             from livekit.plugins import sarvam
 
             log.info("livekit_adapter.tts", vendor="sarvam", model=SARVAM_TTS_MODEL,
@@ -304,7 +314,7 @@ class LiveKitAdapter:
         so this is a no-op there rather than an error: the answer still
         gets spoken, just in an English voice.
         """
-        if not language or language == self._tts_language or VOICE_STACK != "sarvam":
+        if not language or language == self._tts_language or self._voice_stack != "sarvam":
             return
         try:
             self._tts.update_options(target_language_code=language)

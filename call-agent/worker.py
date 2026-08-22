@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+import httpx
 import structlog
 from dotenv import load_dotenv
 from livekit import agents, rtc
@@ -24,8 +25,32 @@ log = structlog.get_logger()
 BRAIN_API_URL = os.environ.get("BRAIN_API_URL", "http://localhost:8000")
 
 
+async def _call_config(room_name: str) -> dict:
+    """Fetch the meeting's configuration before building the session.
+
+    The voice stack has to be decided BEFORE AgentSession is constructed —
+    STT and TTS are constructor arguments — so this is a blocking fetch at
+    job start rather than something applied later. A failure here is not
+    fatal: the deployment default is a working stack, and a call that
+    connects in English beats a call that does not connect.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(f"{BRAIN_API_URL}/api/meetings/{room_name}/call-config")
+            if resp.status_code == 200:
+                return resp.json()
+            log.info("worker.call_config_unavailable", status=resp.status_code, room=room_name)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("worker.call_config_failed", error=str(exc), room=room_name)
+    return {}
+
+
 async def entrypoint(ctx: agents.JobContext) -> None:
     log.info("worker.job_starting", room=ctx.room.name)
+    config = await _call_config(ctx.room.name)
+    voice_stack = config.get("voice_stack")
+    if voice_stack:
+        log.info("worker.voice_stack_from_call", stack=voice_stack, room=ctx.room.name)
 
     orchestrator: Orchestrator | None = None
     adapter: LiveKitAdapter | None = None
@@ -45,7 +70,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             async def on_poke(self, speaker_id: str, display_name: str) -> None:
                 await orchestrator.on_poke(speaker_id, display_name)
 
-        adapter = LiveKitAdapter(ctx, _Callbacks())
+        adapter = LiveKitAdapter(ctx, _Callbacks(), voice_stack=voice_stack)
         # The room name is the meeting slug (abcd-efgh), which is what the
         # transcript is filed under.
         orchestrator = Orchestrator(adapter, BRAIN_API_URL, meeting_slug=ctx.room.name)

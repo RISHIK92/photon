@@ -278,3 +278,27 @@ async def update_config(
     await session.commit()
     await session.refresh(meeting)
     return meeting
+
+
+@router.get("/{slug}/call-config")
+async def call_config(slug: str, session: AsyncSession = Depends(get_session)):
+    """Configuration the call-agent worker needs at job start.
+
+    Unauthenticated, like /api/agent/ask, for the same reason: the worker is
+    a server-side component with no user session (see CLAUDE.md). It returns
+    no secrets and no content — only which voice stack and persona this room
+    was configured with — but it does confirm a room exists, so it needs the
+    same shared secret as the transcript endpoint before this is exposed
+    beyond localhost.
+    """
+    meeting = await _meeting_by_slug(session, slug)
+    return {
+        "slug": meeting.slug,
+        "workspace_id": meeting.workspace_id,
+        "bot_types": meeting.bot_types or ["support"],
+        "language_mode": meeting.language_mode or "english",
+        # The mapping lives here rather than in the worker so "multilingual
+        # means Sarvam" is decided in one place.
+        "voice_stack": "sarvam" if (meeting.language_mode or "english") == "multilingual" else "deepgram",
+        "enabled_sources": meeting.enabled_sources,
+    }
