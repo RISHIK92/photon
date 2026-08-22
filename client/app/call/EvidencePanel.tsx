@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import CodeSnippet from "./CodeSnippet";
 import {
   AgentAnswer,
   CITATION_RE,
@@ -78,10 +79,19 @@ function EvidenceCard({
         </span>
         <span className="text-xs text-neutral-600">score {ev.score.toFixed(2)}</span>
       </div>
-      <div className="font-mono text-xs text-neutral-400 mb-1 break-all">{ev.locator}</div>
-      <pre className="text-xs text-neutral-300 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-        {ev.snippet}
-      </pre>
+      {ev.source_type === "code" ? (
+        // Code gets real line numbers and highlighting; prose does not need
+        // either, and a monospace block would make a Slack message harder
+        // to read rather than easier.
+        <CodeSnippet locator={ev.locator} code={ev.snippet} />
+      ) : (
+        <>
+          <div className="font-mono text-xs text-neutral-400 mb-1 break-all">{ev.locator}</div>
+          <pre className="text-xs text-neutral-300 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+            {ev.snippet}
+          </pre>
+        </>
+      )}
     </div>
   );
 }

@@ -24,3 +24,97 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ---------------------------------------------------------------------------
+   Landing page — warm-paper editorial palette. Scoped to .l-landing so the
+   product UI (dashboard, call page) keeps its own neutral-950 look.
+   --------------------------------------------------------------------------- */
+.l-landing {
+  --l-paper: #fffdf8;
+  --l-paper-2: #f6f1e7;
+  --l-ink: #1c1917;
+  --l-ink-2: #44403c;
+  --l-muted: #78716c;
+  --l-rule: #e8dfd0;
+  --l-rust: #b45309;
+  --l-terra: #c2703d;
+  --l-night: #141413;
+
+  background: var(--l-paper);
+  color: var(--l-ink);
+  font-family: var(--font-geist-sans), Inter, -apple-system, system-ui, sans-serif;
+  /* the paper: a wash of warm light plus a very fine grain */
+  background-image:
+    radial-gradient(1100px 620px at 12% -10%, #fffefb 0%, transparent 60%),
+    radial-gradient(900px 540px at 92% 8%, #f7f2e6 0%, transparent 62%),
+    linear-gradient(180deg, #fffdf8 0%, #f8f4ec 100%);
+}
+
+/* anchor jumps from the floating nav should glide, not cut */
+html:has(.l-landing) {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has(.l-landing) {
+    scroll-behavior: auto;
+  }
+}
+
+.l-landing ::selection {
+  background: rgba(180, 83, 9, 0.16);
+}
+
+/* the thin ticking line under SCROLL in the hero */
+.l-scroll-line {
+  display: block;
+  width: 1px;
+  height: 46px;
+  background: linear-gradient(180deg, var(--l-rust), transparent);
+  animation: l-drop 2.1s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  transform-origin: top;
+}
+
+@keyframes l-drop {
+  0% { transform: scaleY(0); opacity: 0; }
+  35% { transform: scaleY(1); opacity: 1; }
+  100% { transform: scaleY(1) translateY(46px); opacity: 0; }
+}
+
+.l-marquee {
+  animation: l-marquee 42s linear infinite;
+}
+
+@keyframes l-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-100%, 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .l-landing *,
+  .l-marquee,
+  .l-scroll-line {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* language card: each language remounts, so the fade replays per switch */
+.l-lang-in {
+  animation: l-lang-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes l-lang-in {
+  from { opacity: 0; transform: translateY(10px); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+
+.l-lang-bar {
+  animation: l-lang-bar 4.6s linear both;
+  transform-origin: left;
+}
+
+@keyframes l-lang-bar {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}

@@ -1,14 +1,29 @@
-"use client";
+import Chrome from "./_landing/Chrome";
+import Hero from "./_landing/Hero";
+import AnswerZoom from "./_landing/AnswerZoom";
+import TurnStrip from "./_landing/TurnStrip";
+import Languages from "./_landing/Languages";
+import { Closing, Features, Footer, Rules, Sources, Statement } from "./_landing/Sections";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { getToken } from "@/lib/api";
-
-/** Root is just a router: signed in -> dashboard, otherwise -> login. */
+/**
+ * Landing page. Signed-in visitors are not redirected away any more — the
+ * nav and the hero CTA switch to "Dashboard" instead, so the marketing page
+ * stays reachable at the root for everyone.
+ */
 export default function Home() {
-  const router = useRouter();
-  useEffect(() => {
-    router.replace(getToken() ? "/dashboard" : "/login");
-  }, [router]);
-  return <div className="min-h-screen bg-neutral-950" />;
+  return (
+    <main className="l-landing relative w-full overflow-x-clip">
+      <Chrome />
+      <Hero />
+      <Statement />
+      <AnswerZoom />
+      <TurnStrip />
+      <Languages />
+      <Features />
+      <Sources />
+      <Rules />
+      <Closing />
+      <Footer />
+    </main>
+  );
 }

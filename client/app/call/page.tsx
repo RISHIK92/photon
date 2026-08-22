@@ -165,10 +165,16 @@ export default function CallPage() {
       // multi-repo disambiguation note — the agent endpoint itself is
       // still unauthenticated, so this is client-asserted, not verified.
       const workspace_id = getWorkspaceId() || undefined;
+      // The meeting, when we're in one, outranks the client-asserted
+      // workspace: the server resolves the call's configuration from the
+      // slug (persona, and which sources are allowed), and a call that was
+      // set up to exclude a source must not have it reintroduced by
+      // whatever workspace this browser happens to have selected.
+      const meeting_slug = meetingCode.trim() || undefined;
       const res = await fetch(`${BRAIN_API_URL}/api/agent/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, workspace_id }),
+        body: JSON.stringify({ question, workspace_id, meeting_slug }),
       });
       if (!res.ok || !res.body) throw new Error(`brain-api returned ${res.status}`);
 
@@ -207,7 +213,7 @@ export default function CallPage() {
     } finally {
       setTextBusy(false);
     }
-  }, [textInput, textBusy, onTraceEvent]);
+  }, [textInput, textBusy, onTraceEvent, meetingCode]);
 
   return (
     <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
