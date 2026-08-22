@@ -1,37 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Room,
-  RoomEvent,
-  Track,
-  RemoteTrack,
-  RemoteTrackPublication,
-  RemoteParticipant,
-  LocalParticipant,
-} from "livekit-client";
+import "@livekit/components-styles";
+import { useCallback, useState } from "react";
+import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import { AgentAnswer } from "@/lib/evidence";
 import EvidencePanel from "./EvidencePanel";
 import AccountSummary from "./AccountSummary";
+import CaptionsBridge from "./CaptionsBridge";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
 type ConnState = "idle" | "connecting" | "connected" | "error";
 type Turn = { role: "user" | "agent"; question?: string; result?: AgentAnswer };
+type TokenData = { url: string; token: string };
 
 export default function CallPage() {
   const [identity, setIdentity] = useState("");
   const [state, setState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [micOn, setMicOn] = useState(false);
-  const [screenOn, setScreenOn] = useState(false);
+  const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [captions, setCaptions] = useState<string[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [textInput, setTextInput] = useState("");
   const [textBusy, setTextBusy] = useState(false);
-
-  const roomRef = useRef<Room | null>(null);
-  const audioContainerRef = useRef<HTMLDivElement | null>(null);
 
   const connect = useCallback(async () => {
     if (!identity.trim()) {
@@ -40,71 +31,28 @@ export default function CallPage() {
     }
     setState("connecting");
     setError(null);
-
     try {
       const res = await fetch(
         `/api/livekit-token?room=photon&identity=${encodeURIComponent(identity)}`
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "failed to get a token");
-
-      const room = new Room();
-      roomRef.current = room;
-
-      room.on(RoomEvent.Disconnected, () => setState("idle"));
-
-      room.on(
-        RoomEvent.TrackSubscribed,
-        (track: RemoteTrack, _pub: RemoteTrackPublication, _participant: RemoteParticipant) => {
-          if (track.kind === Track.Kind.Audio) {
-            const el = track.attach();
-            audioContainerRef.current?.appendChild(el);
-          }
-        }
-      );
-
-      room.on(RoomEvent.TranscriptionReceived, (segments) => {
-        const lines = segments.map((s) => s.text).filter(Boolean);
-        if (lines.length) setCaptions((prev) => [...prev.slice(-8), ...lines]);
-      });
-
-      await room.connect(data.url, data.token);
+      setTokenData({ url: data.url, token: data.token });
       setState("connected");
-
-      const lp: LocalParticipant = room.localParticipant;
-      await lp.setMicrophoneEnabled(true);
-      setMicOn(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setState("error");
     }
   }, [identity]);
 
-  const disconnect = useCallback(async () => {
-    await roomRef.current?.disconnect();
-    roomRef.current = null;
+  const onDisconnected = useCallback(() => {
     setState("idle");
-    setMicOn(false);
-    setScreenOn(false);
+    setTokenData(null);
   }, []);
 
-  const toggleMic = useCallback(async () => {
-    const lp = roomRef.current?.localParticipant;
-    if (!lp) return;
-    await lp.setMicrophoneEnabled(!micOn);
-    setMicOn(!micOn);
-  }, [micOn]);
-
-  const toggleScreenShare = useCallback(async () => {
-    const lp = roomRef.current?.localParticipant;
-    if (!lp) return;
-    try {
-      await lp.setScreenShareEnabled(!screenOn);
-      setScreenOn(!screenOn);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [screenOn]);
+  const onCaption = useCallback((text: string) => {
+    setCaptions((prev) => [...prev.slice(-8), text]);
+  }, []);
 
   const askByText = useCallback(async () => {
     const question = textInput.trim();
@@ -145,12 +93,6 @@ export default function CallPage() {
     }
   }, [textInput, textBusy]);
 
-  useEffect(() => {
-    return () => {
-      roomRef.current?.disconnect();
-    };
-  }, []);
-
   return (
     <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
       <header className="border-b border-neutral-800 px-6 py-4 shrink-0">
@@ -161,9 +103,9 @@ export default function CallPage() {
         </p>
       </header>
 
-      <main className="flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-6 p-6 min-h-0 overflow-hidden">
-        <section className="flex flex-col gap-4 overflow-y-auto">
-          {state !== "connected" ? (
+      <main className="flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-6 p-6 min-h-0 overflow-hidden">
+        <section className="flex flex-col gap-3 min-h-0">
+          {state !== "connected" || !tokenData ? (
             <div className="flex flex-col gap-3 max-w-sm">
               <input
                 className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
@@ -181,50 +123,45 @@ export default function CallPage() {
               {error && <p className="text-red-400 text-sm">{error}</p>}
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex gap-3">
-                <button
-                  onClick={toggleMic}
-                  className={`rounded px-4 py-2 text-sm font-medium ${
-                    micOn ? "bg-neutral-800" : "bg-red-900"
-                  }`}
+            <>
+              {/* The actual meeting room — real video tiles, screen-share
+                  viewer, and mic/camera/screen-share/leave controls, all
+                  from LiveKit's own prefab rather than a hand-rolled
+                  hidden-audio div. This is what makes it look like a call. */}
+              <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-neutral-800">
+                <LiveKitRoom
+                  serverUrl={tokenData.url}
+                  token={tokenData.token}
+                  connect
+                  audio
+                  video={false}
+                  data-lk-theme="default"
+                  onDisconnected={onDisconnected}
+                  style={{ height: "100%" }}
                 >
-                  {micOn ? "Mute mic" : "Unmute mic"}
-                </button>
-                <button
-                  onClick={toggleScreenShare}
-                  className={`rounded px-4 py-2 text-sm font-medium ${
-                    screenOn ? "bg-indigo-700" : "bg-neutral-800"
-                  }`}
-                >
-                  {screenOn ? "Stop sharing screen" : "Share screen"}
-                </button>
-                <button
-                  onClick={disconnect}
-                  className="rounded px-4 py-2 text-sm font-medium bg-neutral-800 hover:bg-neutral-700"
-                >
-                  Leave
-                </button>
+                  <VideoConference />
+                  <CaptionsBridge onCaption={onCaption} />
+                </LiveKitRoom>
               </div>
 
-              <div>
-                <h2 className="text-sm font-medium text-neutral-400 mb-2">Live captions</h2>
-                <div className="bg-neutral-900 border border-neutral-800 rounded p-3 h-40 overflow-y-auto text-sm space-y-1">
+              <div className="shrink-0">
+                <h2 className="text-xs uppercase tracking-wide text-neutral-500 mb-1">
+                  Live captions
+                </h2>
+                <div className="bg-neutral-900 border border-neutral-800 rounded p-2 h-20 overflow-y-auto text-xs space-y-1">
                   {captions.length === 0 && <p className="text-neutral-600">…</p>}
                   {captions.map((c, i) => (
                     <p key={i}>{c}</p>
                   ))}
                 </div>
               </div>
-            </div>
+            </>
           )}
 
-          <div ref={audioContainerRef} className="hidden" />
-
           {/* Note: this evidence panel currently only reflects the text-input
-              path below. The voice path (call-agent's orchestrator) speaks
-              its answer via TTS but doesn't yet broadcast the structured
-              result back to the browser — see CLAUDE.md Phase 5. */}
+              path on the right. The voice path (call-agent's orchestrator)
+              speaks its answer via TTS but doesn't yet broadcast the
+              structured result back to the browser — see CLAUDE.md Phase 5. */}
         </section>
 
         <section className="flex flex-col min-h-0 h-full bg-neutral-900/30 border border-neutral-800 rounded-lg p-4">

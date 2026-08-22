@@ -109,6 +109,37 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — the join page didn't actually look like a meeting
+
+The user caught a real miss after Phase 5 shipped: `client/app/call/`
+never rendered any video. It attached remote *audio* to a hidden `<div>`
+and called it done — no video tiles, no participant grid, no visible
+screen-share viewer, despite the plan's Section 10 explicitly asking for
+"video tiles". The transport itself was genuinely real LiveKit (verified
+in Phase 4), but the UI read as a chat app with buttons, not a call.
+
+Fixed by adopting `@livekit/components-react` + `@livekit/components-styles`
+(installed, confirmed peer-dep compatible with the already-installed
+`livekit-client@2.22.0`/React 19) instead of hand-rolling tile rendering:
+`<LiveKitRoom serverUrl token connect audio>` wrapping the `<VideoConference>`
+prefab gives real participant tiles, a proper control bar (mic/camera/
+screen-share/chat/leave), and screen-share handling for free. A small
+`CaptionsBridge` component (using `useRoomContext()` inside the
+`LiveKitRoom` tree) forwards STT transcriptions back out to the page so
+captions can sit outside `VideoConference`'s own layout. The evidence
+panel stays a sibling next to it, not inside — matches the plan's "beside
+the video, not inside it."
+
+**Live-verified, not just compiled**: joined as a browser participant —
+got a real named video tile ("TestUser") with mic/camera/share-screen/
+chat/leave controls, confirmed via console logs as a genuine LiveKit
+connection (`connected to Livekit Server ... region: India South`, real
+`connecting -> connected` state transitions, not mocked). Then started
+`call-agent/worker.py` and it joined the same room as a second tile
+(`agent-AJ_...`), with live captions showing real STT transcription of
+actual microphone audio in real time. This is now a genuine two-
+participant meeting view, not a hidden-audio chat page.
+
 ### Phase 4 — live call transport (done)
 
 New top-level service, `call-agent/`, with its **own venv** — same reason
