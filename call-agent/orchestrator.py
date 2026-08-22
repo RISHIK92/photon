@@ -36,6 +36,13 @@ log = structlog.get_logger()
 # screen and help me open the search bar?") — "check/look at my screen",
 # "share my screen", "help me find/open/see", "what's on (my) screen" all
 # now match, not just the original narrow "where do i"/"this screen" set.
+# Saying its name is the fallback for anyone not using our join page (a
+# phone/SIP caller, another client). Note the real limitation: LiveKit's
+# session listens to one linked participant at a time, so a wake word is
+# only heard from whoever is currently linked — the button is what makes
+# addressing work for everyone else.
+WAKE_WORD_RE = re.compile(r"^\s*(hey\s+|ok\s+)?photon\b[\s,:-]*", re.IGNORECASE)
+
 VISUAL_HINT_RE = re.compile(
     r"\b(where do i|i can'?t find|this screen|(on|check|look at|share|see) (my |the )?screen"
     r"|what'?s on (my |the )?screen|help me (find|open|see|locate)"
@@ -65,21 +72,37 @@ SCREEN_FRAME_TTL_SECONDS = 30.0
 # use romanises Indic speech, which defeats script detection.
 REPLY_LANGUAGE = os.environ.get("AGENT_REPLY_LANGUAGE", "auto").strip()
 
+# How long a poke keeps the agent listening to that person. Long enough to
+# gather a thought, short enough that a forgotten poke doesn't leave the
+# agent answering a private aside ten minutes later.
+POKE_WINDOW_SECONDS = float(os.environ.get("AGENT_POKE_WINDOW_SECONDS", "45"))
+
 
 @dataclass
 class TurnState:
     transcript: list[dict] = field(default_factory=list)
     latest_screen_frame: bytes | None = None
     latest_screen_frame_at: float = 0.0
+    # Who last addressed the agent, and when. With several humans plus
+    # external guests on a call, "answer everything you hear" is wrong:
+    # it talks over side conversations and, worse, would attribute
+    # someone else's words to whoever happens to be linked.
+    addressed_by: str | None = None
+    addressed_name: str | None = None
+    addressed_at: float = 0.0
+    names: dict = field(default_factory=dict)
 
 
 class Orchestrator:
     """Implements SessionCallbacks. Holds no transport objects of its own —
     just a TransportAdapter reference to act through."""
 
-    def __init__(self, adapter: TransportAdapter, brain_api_url: str):
+    def __init__(self, adapter: TransportAdapter, brain_api_url: str, meeting_slug: str | None = None):
         self.adapter = adapter
         self.brain_api_url = brain_api_url.rstrip("/")
+        # The LiveKit room name IS the meeting slug (abcd-efgh), so the
+        # room, the share link and the transcript are one identifier.
+        self.meeting_slug = meeting_slug
         self.state = TurnState()
         self._http = httpx.AsyncClient(timeout=90.0)
 
@@ -88,14 +111,64 @@ class Orchestrator:
 
     # ── SessionCallbacks ──────────────────────────────────────────────────
 
+    async def on_poke(self, speaker_id: str, display_name: str) -> None:
+        self.state.addressed_by = speaker_id
+        self.state.addressed_name = display_name
+        self.state.addressed_at = time.time()
+        self.state.names[speaker_id] = display_name
+        log.info("orchestrator.poked", speaker_id=speaker_id, name=display_name)
+
+    def _is_addressed(self, speaker_id: str, text: str) -> bool:
+        """Two ways to address the agent, per the product decision to
+        support both a button and saying its name."""
+        if WAKE_WORD_RE.match(text.strip()):
+            return True
+        if self.state.addressed_by is None:
+            return False
+        within_window = (time.time() - self.state.addressed_at) <= POKE_WINDOW_SECONDS
+        return within_window and speaker_id == self.state.addressed_by
+
     async def on_speech(self, text: str, speaker_id: str, is_final: bool) -> None:
         if not is_final or not text.strip():
             return
 
+        speaker_name = self.state.names.get(speaker_id, speaker_id)
         self.state.transcript.append({"speaker_id": speaker_id, "text": text, "ts": time.time()})
         log.info("orchestrator.speech_finalized", speaker_id=speaker_id, text=text)
 
-        await self._handle_turn(text)
+        # Everything said is transcribed; only what is addressed to the
+        # agent gets answered.
+        await self._record_transcript("human", speaker_name, text, speaker_id)
+
+        if not self._is_addressed(speaker_id, text):
+            log.info("orchestrator.not_addressed", speaker_id=speaker_id)
+            return
+
+        # The window is consumed by the turn it triggered, so one poke
+        # answers one question rather than leaving the mic hot.
+        self.state.addressed_by = None
+
+        await self._handle_turn(WAKE_WORD_RE.sub("", text.strip(), count=1).strip() or text)
+
+    async def _record_transcript(
+        self, role: str, speaker_name: str, text: str, speaker_identity: str | None = None
+    ) -> None:
+        """Best-effort: a transcript write must never delay or break a call."""
+        if not self.meeting_slug:
+            return
+        try:
+            await self._http.post(
+                f"{self.brain_api_url}/api/meetings/{self.meeting_slug}/transcript",
+                json={
+                    "role": role,
+                    "speaker_name": speaker_name,
+                    "speaker_identity": speaker_identity,
+                    "text": text,
+                },
+                timeout=10.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("orchestrator.transcript_write_failed", error=str(exc))
 
     async def on_frame(self, image: bytes, source: str) -> None:
         if source != "screen":
@@ -158,7 +231,9 @@ class Orchestrator:
             # literally ("...platform ev 20021cda"). The structured answer
             # already went to the browser with every marker intact, so the
             # evidence chips are unaffected.
-            await self.adapter.speak(for_speech(answer), language=language)
+            spoken = for_speech(answer)
+            await self._record_transcript("agent", "Photon", spoken)
+            await self.adapter.speak(spoken, language=language)
         else:
             log.warning("orchestrator.empty_answer", question=question, result=result)
 
@@ -182,6 +257,7 @@ class Orchestrator:
                                         "confidence": "high", "abstained": False, "escalation": None,
                                         "tool_trace": []}})
         if answer:
+            await self._record_transcript("agent", "Photon", answer)
             await self.adapter.speak(answer, language=language)
 
     async def _ask_brain(

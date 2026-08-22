@@ -8,11 +8,13 @@ import { getWorkspaceId } from "@/lib/api";
 import EvidencePanel from "./EvidencePanel";
 import AccountSummary from "./AccountSummary";
 import CaptionsBridge from "./CaptionsBridge";
+import PokeButton from "./PokeButton";
 import CaptionsPanel from "./CaptionsPanel";
 import TraceBridge from "./TraceBridge";
 import AdvancedPanel from "./AdvancedPanel";
 import { mergeCaption, type Caption } from "@/lib/captions";
 import { applyTraceEvent, type TraceEvent, type TurnTrace } from "@/lib/trace";
+import { createMeeting, getToken, transcriptUrl } from "@/lib/api";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
@@ -22,6 +24,10 @@ type TokenData = { url: string; token: string };
 
 export default function CallPage() {
   const [identity, setIdentity] = useState("");
+  // The meeting code (abcd-efgh) doubles as the LiveKit room name. Signed-in
+  // users create one; anyone with the code — including external guests who
+  // are not workspace members — can join it.
+  const [meetingCode, setMeetingCode] = useState("");
   const [state, setState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
@@ -32,16 +38,38 @@ export default function CallPage() {
   const [textBusy, setTextBusy] = useState(false);
 
   const connect = useCallback(async () => {
-    if (!identity.trim()) {
-      setError("Enter a name first.");
-      return;
-    }
     setState("connecting");
     setError(null);
     try {
-      const res = await fetch(
-        `/api/livekit-token?room=photon&identity=${encodeURIComponent(identity)}`
-      );
+      const token = getToken();
+      let code = meetingCode.trim().toLowerCase();
+
+      if (!code) {
+        if (!token) {
+          setError("Enter a meeting code to join, or sign in to start one.");
+          setState("idle");
+          return;
+        }
+        code = (await createMeeting()).slug;
+        setMeetingCode(code);
+      }
+
+      // Identity is NEVER sent from here: the route derives it from the
+      // signed-in session, or issues a guest identity. A name is only used
+      // as a guest's display label.
+      const params = new URLSearchParams({ room: code });
+      if (!token) {
+        if (!identity.trim()) {
+          setError("Enter your name to join as a guest.");
+          setState("idle");
+          return;
+        }
+        params.set("name", identity.trim());
+      }
+
+      const res = await fetch(`/api/livekit-token?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "failed to get a token");
       setTokenData({ url: data.url, token: data.token });
@@ -50,7 +78,7 @@ export default function CallPage() {
       setError(e instanceof Error ? e.message : String(e));
       setState("error");
     }
-  }, [identity]);
+  }, [identity, meetingCode]);
 
   const onDisconnected = useCallback(() => {
     setState("idle");
@@ -168,8 +196,14 @@ export default function CallPage() {
           {state !== "connected" || !tokenData ? (
             <div className="flex flex-col gap-3 max-w-sm">
               <input
+                className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm font-mono"
+                placeholder="Meeting code (abcd-efgh) — blank starts a new one"
+                value={meetingCode}
+                onChange={(e) => setMeetingCode(e.target.value)}
+              />
+              <input
                 className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
-                placeholder="Your name"
+                placeholder="Your name (guests only)"
                 value={identity}
                 onChange={(e) => setIdentity(e.target.value)}
               />
@@ -188,7 +222,27 @@ export default function CallPage() {
                   viewer, and mic/camera/screen-share/leave controls, all
                   from LiveKit's own prefab rather than a hand-rolled
                   hidden-audio div. This is what makes it look like a call. */}
-              <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-neutral-800">
+              <div className="flex items-center gap-3 shrink-0 text-sm">
+                <span className="text-neutral-500">Meeting code</span>
+                <code className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 font-mono">
+                  {meetingCode}
+                </code>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(meetingCode)}
+                  className="text-xs text-neutral-400 hover:text-neutral-100"
+                >
+                  copy
+                </button>
+                <a
+                  href={transcriptUrl(meetingCode)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-indigo-400 hover:text-indigo-300 ml-auto"
+                >
+                  transcript ↗
+                </a>
+              </div>
+              <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-neutral-800 relative">
                 <LiveKitRoom
                   serverUrl={tokenData.url}
                   token={tokenData.token}
@@ -200,6 +254,9 @@ export default function CallPage() {
                   style={{ height: "100%" }}
                 >
                   <VideoConference />
+                  <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                    <PokeButton />
+                  </div>
                   <CaptionsBridge onCaption={onCaption} />
                   <TraceBridge onEvent={onVoiceTraceEvent} />
                 </LiveKitRoom>

@@ -47,6 +47,12 @@ ANNOUNCEMENT = (
 # events never get confused with chat or any other data traffic.
 TRACE_TOPIC = "photon.trace"
 
+# Participants poke the agent to address it. Without this the session
+# listens to whoever LiveKit happened to link first and answers every
+# utterance from them — unworkable once a call has several humans and
+# external guests on it.
+POKE_TOPIC = "photon.poke"
+
 _SCREEN_FRAME_INTERVAL_SPEAKING = 1.0  # ~1 fps while someone is speaking
 _SCREEN_FRAME_INTERVAL_IDLE = 1.0 / 0.3  # ~0.3 fps otherwise
 _SCREEN_FRAME_MAX_DIM = 1024
@@ -122,6 +128,7 @@ class LiveKitAdapter:
         agent = _InterceptAgent(self._callbacks, speaker_id_fn=self._current_speaker_id)
 
         self._ctx.room.on("track_subscribed", self._on_track_subscribed)
+        self._ctx.room.on("data_received", self._on_data_received)
         # `track_subscribed` only fires for tracks that arrive AFTER this
         # handler is attached — and ctx.connect() above has already run, so
         # a participant who was ALREADY sharing their screen when the agent
@@ -153,6 +160,46 @@ class LiveKitAdapter:
             return linked.identity
         log.warning("livekit_adapter.speaker_unresolved")
         return self._ctx.room.local_participant.identity or "unknown"
+
+    def _on_data_received(self, packet: rtc.DataPacket) -> None:
+        """A participant pressed "Ask Photon".
+
+        LiveKit's AgentSession listens to exactly ONE participant at a time
+        (RoomIO.linked_participant), so a poke is not just an intent
+        signal — it is how we choose whose microphone the agent is on. It
+        also makes attribution certain, which matters because the answer
+        may draw on that person's own private sources.
+
+        The identity comes from the packet's sender, not from its payload:
+        LiveKit tells us who actually sent it, so nobody can poke as
+        somebody else.
+        """
+        if packet.topic != POKE_TOPIC:
+            return
+        participant = packet.participant
+        if participant is None:
+            log.warning("livekit_adapter.poke_without_sender")
+            return
+        asyncio.create_task(self._link_speaker(participant))
+
+    async def _link_speaker(self, participant: rtc.RemoteParticipant) -> None:
+        room_io = getattr(self._session, "_room_io", None) or getattr(self._session, "room_io", None)
+        if room_io is None:
+            log.warning("livekit_adapter.poke_no_room_io")
+            return
+        try:
+            current = getattr(room_io.linked_participant, "identity", None)
+            if current != participant.identity:
+                room_io.set_participant(participant.identity)
+            log.info(
+                "livekit_adapter.poked",
+                identity=participant.identity,
+                name=participant.name,
+                previous=current,
+            )
+            await self._callbacks.on_poke(participant.identity, participant.name or participant.identity)
+        except Exception as exc:  # noqa: BLE001 - a bad poke must not end the call
+            log.error("livekit_adapter.poke_failed", error=str(exc))
 
     def _attach_existing_screenshare(self) -> None:
         for participant in self._ctx.room.remote_participants.values():

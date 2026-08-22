@@ -151,6 +151,68 @@ class WorkspaceRead(SQLModel):
 # what's visible, and by tasks/ingestion.py to know which installation's
 # token to mint for cloning. See app/services/github_app_auth.py.
 
+# ─── Meetings ─────────────────────────────────────────────────────────────
+
+
+class Meeting(SQLModel, table=True):
+    """One call. `slug` is the human-shareable identifier (abcd-efgh) and
+    doubles as the LiveKit room name, so a link, a room and a transcript are
+    the same thing rather than three ids to reconcile."""
+    __tablename__ = "meetings"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    slug: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    title: Optional[str] = None
+    created_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    ended_at: Optional[datetime] = None
+
+
+class TranscriptRole(str, Enum):
+    HUMAN = "human"
+    AGENT = "agent"
+
+
+class TranscriptEntry(SQLModel, table=True):
+    """One line of the shared transcript.
+
+    Rows rather than appending to a single markdown column: several
+    participants and the agent all write during a call, and concurrent
+    read-modify-write on one text field silently loses lines. The markdown
+    is rendered from these on demand (GET .../transcript.md), so the
+    deliverable is still one common .md.
+    """
+    __tablename__ = "transcript_entries"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    meeting_id: str = Field(sa_column=Column(String, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True))
+    role: TranscriptRole = TranscriptRole.HUMAN
+    # Display name as seen on the call ("rishik@…", "Client A", "Photon").
+    speaker_name: str
+    # Participant identity ("user:<uuid>" / "guest:<rand>"); null for the agent.
+    speaker_identity: Optional[str] = None
+    # Set only when the speaker is a signed-in user, so a transcript can be
+    # tied back to a person without trusting a display name.
+    speaker_user_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    text: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MeetingRead(SQLModel):
+    id: str
+    slug: str
+    title: Optional[str]
+    workspace_id: str
+    created_at: datetime
+    ended_at: Optional[datetime]
+
+
+class TranscriptEntryCreate(SQLModel):
+    role: TranscriptRole = TranscriptRole.HUMAN
+    speaker_name: str
+    speaker_identity: Optional[str] = None
+    text: str
+
+
 class ConnectionScope(str, Enum):
     """Who a connected source belongs to.
 

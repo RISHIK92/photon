@@ -36,6 +36,15 @@ from typing import Literal, Protocol
 class SessionCallbacks(Protocol):
     async def on_speech(self, text: str, speaker_id: str, is_final: bool) -> None: ...
 
+    async def on_poke(self, speaker_id: str, display_name: str) -> None:
+        """A participant explicitly addressed the agent ("Ask Photon").
+
+        This is the multi-party addressing signal. It carries identity
+        because the platform knows who sent it — the orchestrator must not
+        infer who is talking from anything the client could set itself.
+        """
+        ...
+
     async def on_frame(self, image: bytes, source: Literal["screen", "camera"]) -> None: ...
 
 

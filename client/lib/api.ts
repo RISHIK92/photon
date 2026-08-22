@@ -218,3 +218,26 @@ export const importGithubRepos = (installationId: number, repos: GithubRepoOptio
       repos: repos.map((r) => ({ id: r.id, full_name: r.full_name, clone_url: r.clone_url })),
     }),
   });
+
+
+// ── Meetings ─────────────────────────────────────────────────────────────
+// The slug (abcd-efgh) is the LiveKit room name AND the transcript id, so a
+// share link, a room and its transcript are one identifier.
+export type Meeting = {
+  id: string;
+  slug: string;
+  title: string | null;
+  workspace_id: string;
+  created_at: string;
+  ended_at: string | null;
+};
+
+export const createMeeting = (title?: string) =>
+  api<Meeting>("/api/meetings", { method: "POST", body: JSON.stringify({ title: title ?? null }) });
+
+export const listMeetings = () => api<Meeting[]>("/api/meetings");
+
+export const getMeeting = (slug: string) => api<Meeting>(`/api/meetings/${slug}`);
+
+export const transcriptUrl = (slug: string, download = false) =>
+  `${BASE}/api/meetings/${slug}/transcript.md${download ? "?download=true" : ""}`;

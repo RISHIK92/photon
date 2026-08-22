@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 from app.config import get_settings
 from app.database import create_db_and_tables
 from app.models import User, LearningPathCache  # ensure tables are registered before create_all
-from app.routers import repos, jobs, query, graph, annotations, files, workspaces
+from app.routers import repos, jobs, query, graph, annotations, files, workspaces, meetings
 from app.routers import auth
 from app.routers import onboarding
 from app.routers import tools
@@ -115,6 +115,7 @@ app.include_router(annotations.router,  prefix="/api/annotations", tags=["annota
 app.include_router(files.router,        prefix="/api/files",       tags=["files"])
 app.include_router(auth.router,         prefix="/api/auth",        tags=["auth"])
 app.include_router(workspaces.router,   prefix="/api/workspaces",  tags=["workspaces"])
+app.include_router(meetings.router,     prefix="/api/meetings",    tags=["meetings"])
 app.include_router(onboarding.router,   prefix="/api/repos",       tags=["onboarding"])
 app.include_router(tools.router,        prefix="/api/tools",       tags=["tools"])  # unauthenticated for the demo, see CLAUDE.md
 app.include_router(agent.router,        prefix="/api/agent",       tags=["agent"])  # unauthenticated for the demo, see CLAUDE.md

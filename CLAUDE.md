@@ -149,6 +149,76 @@ derives access from the App's PERMISSIONS, not from OAuth scopes, so
 `scope=user:email` in the authorize URL buys nothing and the call fails
 for any user with a private email — which is the GitHub default.
 
+## Multi-party calls — poke to address, meeting codes, shared transcript
+
+Decided with the user: **poke by button AND wake word**, guests treated as
+viewers (workspace-scoped sources), **individual-scoped sources only serve
+turns attributed to that individual**, and one **common** transcript per
+call keyed by an 8-character code.
+
+**The constraint that shapes all of it**: LiveKit's `AgentSession` listens
+to exactly ONE participant — `RoomIO.linked_participant` /
+`set_participant()` / `RoomInputOptions.participant_identity`. On a call
+with 3 members and 2 external clients it hears one of them (whoever linked
+first). That is why the earlier synthetic test only worked when the fake
+caller joined before the browser.
+
+So a poke is not merely an intent hint — **it is how we choose whose
+microphone the agent is on**, which also makes attribution certain.
+
+- `POKE_TOPIC = "photon.poke"` over the LiveKit data channel;
+  `client/app/call/PokeButton.tsx` sends an EMPTY payload on purpose: the
+  adapter reads the sender from the packet, which LiveKit authenticates.
+  Anything in the body would be self-asserted.
+- `_on_data_received` -> `set_participant(identity)` -> `on_poke` callback
+  (4th method on `SessionCallbacks`).
+- `POKE_WINDOW_SECONDS = 45`, and a poke is **consumed by the turn it
+  triggers** so one poke answers one question rather than leaving the mic
+  hot.
+- Wake word is back as the fallback for clients not using our join page —
+  with the honest limitation that it is only heard from the currently
+  linked participant.
+
+**Two bugs found on the way, both of which would have silently broken
+per-speaker scoping:**
+1. `_InterceptAgent` captured `speaker_id` ONCE at construction — as the
+   AGENT's own identity. Every human utterance was attributed to the agent
+   (`speech_finalized speaker_id=agent-AJ_...` in the logs). Now resolved
+   per turn from the linked participant.
+2. `/api/livekit-token` took `identity` from a **query parameter with no
+   auth** — anyone could join as anyone. Harmless before; not once a turn's
+   attribution decides whose private sources may answer it. Identity now
+   comes from the verified session (checked against `/api/auth/me`, not
+   decoded locally) and is signed into LiveKit token metadata. Guests get a
+   random `guest:` identity.
+
+**Meetings**: `Meeting.slug` is `abcd-efgh` from an alphabet with no
+0/O/1/l/I — the first thing anyone does with a code is read it aloud. The
+slug IS the LiveKit room name, so link, room and transcript are one
+identifier. `normalise()` accepts "ABCD EFGH" and "abcdefgh".
+
+**Transcript** is stored as ROWS and rendered to markdown on demand
+(`GET /api/meetings/{slug}/transcript.md`), not appended to one text
+column: several people and the agent write during a call and concurrent
+read-modify-write loses lines silently. `GET /{slug}` is deliberately not
+workspace-scoped (an external client joining by link is not a member), but
+`transcript.md` **is** — the room is discoverable by code, what was said in
+it is not.
+
+**Verified** with a simulated 3-human + guest call: Alice poked and got an
+answer (2.2s); Bob's side comment was ignored in 9ms with no API call; a
+guest was ignored until they poked, then answered; and all six lines
+including both agent replies rendered into one markdown transcript with
+correct speaker names.
+
+**Limitation to be honest about**: the transcript can only contain what the
+agent HEARS, which is the linked (poked) participant. Un-poked side
+conversation is not captured — the e2e above only showed Bob's line
+because it called `on_speech` directly, bypassing LiveKit. A genuine
+full-room transcript needs an STT stream per participant (~N x audio cost,
+running whether or not anyone addresses the agent) or LiveKit's separate
+transcription/egress. That was the cost trade flagged before building this.
+
 ## GitHub App — setup, and the three bugs that blocked it
 
 The App exists and is live: **Photon-githubabcd**, app id `4684753`, owner
