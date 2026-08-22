@@ -41,9 +41,12 @@ class SourceGroup:
     coming_soon: bool = False
 
 
-# The demo corpus tools are grouped separately and NOT default-enabled for a
-# real workspace: they answer from the fictional Meridian fixture, which is
-# right for a rehearsal and wrong for a customer.
+# The demo corpus (the fictional "Meridian" company) is a REHEARSAL fixture.
+# It used to be appended to every workspace's tool list unconditionally,
+# which meant a real customer's agent could answer from invented accounts,
+# invented tickets and invented docs — confidently, and with citations that
+# look exactly like real ones. It is now an ordinary source group: opt-in,
+# off unless this deployment explicitly enables it.
 SEED_TOOLS = ["search_docs", "search_tickets", "get_account", "list_accounts",
               "get_account_logs", "get_incidents", "check_conflict"]
 
@@ -58,6 +61,7 @@ def _groups() -> list[SourceGroup]:
         SourceGroup("linear", "Linear", ["search_linear"]),
         SourceGroup("datadog", "Datadog", ["search_datadog"]),
         SourceGroup("outlook", "Outlook", [], coming_soon=True),
+        SourceGroup("demo_corpus", "Demo corpus (Meridian)", SEED_TOOLS),
     ]
 
 
@@ -106,6 +110,16 @@ async def source_groups(session: AsyncSession, workspace_id: str) -> list[Source
         groups[key].available = conn is not None
         groups[key].detail = (conn.display_name or "connected") if conn else "not connected"
 
+    # Only present on a deployment that opted in; otherwise the group is
+    # dropped entirely so it cannot be toggled on by accident.
+    from app.config import get_settings
+
+    if get_settings().enable_demo_corpus:
+        groups["demo_corpus"].available = True
+        groups["demo_corpus"].detail = "fictional Meridian data, for demos"
+    else:
+        groups.pop("demo_corpus", None)
+
     return list(groups.values())
 
 
@@ -116,13 +130,21 @@ def default_enabled_keys(groups: list[SourceGroup]) -> list[str]:
     return [g.key for g in groups if g.default_enabled and g.available]
 
 
-def tools_for(groups: list[SourceGroup], enabled_keys: list[str], include_seed: bool = True) -> list[str]:
-    """Tool names the planner may see for this call."""
+def tools_for(groups: list[SourceGroup], enabled_keys: list[str]) -> list[str]:
+    """Tool names the planner may see for this call.
+
+    Nothing is added implicitly. If a workspace has connected nothing, the
+    planner gets an empty list and the agent abstains — which is the honest
+    outcome, and far better than answering from a fixture.
+    """
     enabled = set(enabled_keys)
     names: list[str] = []
     for group in groups:
         if group.key in enabled and group.available:
             names.extend(group.tools)
-    if include_seed:
-        names.extend(SEED_TOOLS)
     return sorted(set(names))
+
+
+def has_any_source(groups: list[SourceGroup]) -> bool:
+    """Whether this workspace can answer anything at all yet."""
+    return any(g.available and not g.coming_soon for g in groups)

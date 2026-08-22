@@ -52,6 +52,11 @@ export default function CallSetup({
   const PRIMARY = ["github", "custom_docs", "slack", "jira"];
   const primary = options.sources.filter((s) => PRIMARY.includes(s.key));
   const secondary = options.sources.filter((s) => !PRIMARY.includes(s.key));
+  // Nothing connected means the agent cannot answer anything, so starting a
+  // call would produce a room where every question is met with an
+  // abstention. The API refuses this too (409) — this is so the user finds
+  // out before they invite anyone, not after.
+  const nothingConnected = !options.sources.some((s) => s.available && !s.coming_soon);
   const internalCaution = botTypes.some(
     (k) => options.bot_types.find((b) => b.key === k)?.internal_caution
   );
@@ -149,18 +154,33 @@ export default function CallSetup({
         )}
       </section>
 
+      {nothingConnected && (
+        <div className="border border-amber-600/50 bg-amber-500/5 rounded p-3 text-sm">
+          <p className="text-amber-300">Connect a source before starting a call</p>
+          <p className="text-neutral-400 mt-1">
+            The agent answers only from what you connect. With nothing indexed it would abstain
+            from every question, which is worse than not starting.
+          </p>
+          <a href="/dashboard" className="inline-block mt-2 text-indigo-400 hover:text-indigo-300">
+            Go to sources →
+          </a>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <button
           onClick={() => onStart({ bot_types: botTypes, language_mode: language, enabled_sources: sources })}
-          disabled={busy || botTypes.length === 0}
+          disabled={busy || botTypes.length === 0 || nothingConnected}
           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
         >
           {busy ? "Starting…" : "Start call"}
         </button>
         <p className="text-xs text-neutral-500">
-          {sources.length === 0
-            ? "No sources selected — the agent will have nothing to answer from."
-            : `${sources.length} source${sources.length === 1 ? "" : "s"} enabled`}
+          {nothingConnected
+            ? "Nothing connected yet"
+            : sources.length === 0
+              ? "No sources selected — the agent will have nothing to answer from."
+              : `${sources.length} source${sources.length === 1 ? "" : "s"} enabled`}
         </p>
       </div>
     </div>

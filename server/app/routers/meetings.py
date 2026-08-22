@@ -66,9 +66,25 @@ async def create_meeting(
     else:
         raise HTTPException(status_code=500, detail="Could not allocate a meeting code")
 
-    from app.services.tool_availability import default_enabled_keys, source_groups
+    from app.services.tool_availability import (
+        default_enabled_keys,
+        has_any_source,
+        source_groups,
+    )
 
     groups = await source_groups(session, workspace.id)
+    if not has_any_source(groups):
+        # Refused rather than allowed-and-useless: a call where the agent
+        # can answer nothing looks broken to everyone on it, and the fix
+        # (connect a source) is not discoverable from inside the call.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This workspace has no sources connected yet — index a repository or upload a "
+                "document before starting a call, or the agent will have nothing to answer from."
+            ),
+        )
+
     meeting = Meeting(
         slug=slug,
         workspace_id=workspace.id,

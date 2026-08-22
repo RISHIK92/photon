@@ -301,6 +301,45 @@ explain_why fix. Eval back to 16/16.
 backend, encryption, sync and tool are done and the endpoints degrade
 cleanly with a 503 until an app is created.
 
+## Removing the demo corpus from real workspaces
+
+The user asked why "Meridian" appeared everywhere. It was leaking in two
+places, and one of them was dangerous:
+
+1. **`tools_for()` appended SEED_TOOLS unconditionally** — so every real
+   workspace's agent could answer from invented accounts, invented tickets
+   and invented docs, confidently, with citations indistinguishable from
+   real ones. The fictional corpus is now an ordinary source group
+   (`demo_corpus`) gated on `enable_demo_corpus`, **off by default**, and
+   dropped from the catalog entirely when disabled so it cannot be toggled
+   on by accident.
+2. **The call page's idle panel listed the fixture's customers.** Showing
+   invented companies to a real user is worse than showing nothing — it
+   implies the agent knows them, and the first question asked will be about
+   a company that does not exist. Replaced with `WorkspaceSummary`, which
+   lists what this workspace can actually answer from.
+
+The seed REPO was already correctly gated (only used when no workspace is
+given, which is the eval path), so it needed no change.
+
+**Joining is now refused when a workspace has no sources** — 409 from the
+API, and the setup screen disables Start with an explanation. A call where
+every question meets an abstention looks broken to everyone on it, and the
+fix (connect a source) is not discoverable from inside the call.
+
+**Verified**: in a workspace holding only an uploaded document, "is
+Northwind Logistics on the partner tier?" now ABSTAINS — it previously
+answered with high confidence from the fixture — while a real question
+about the uploaded process still answers with citations. A brand-new empty
+workspace gets 409 on meeting creation. Eval 15-16/16 (unchanged variance),
+13 tenancy/config tests pass.
+
+**Worth knowing**: the planner sometimes names a tool it was never offered
+(`get_account` here, `search_custom_docs` earlier) — the model recognises
+the question shape and invents a plausible tool name. The execution-time
+block catches it, which is exactly why hiding tools from the prompt was
+never treated as sufficient on its own.
+
 ## Multi-party calls — poke to address, meeting codes, shared transcript
 
 Decided with the user: **poke by button AND wake word**, guests treated as

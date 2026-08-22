@@ -128,6 +128,12 @@ class Settings(BaseSettings):
             value = value.replace("\\n", "\n")
         return value.strip() + "\n"  # PEM parsers want a trailing newline
 
+    # The fictional "Meridian" corpus used to rehearse the demo scenarios.
+    # OFF by default: with it on, a workspace that has connected nothing
+    # still answers questions — from invented accounts and invented
+    # tickets, with citations indistinguishable from real ones.
+    enable_demo_corpus: bool = False
+
     # ─── Slack ───────────────────────────────────────────────────────────
     # A Slack app is per-deployment, created once from the manifest at
     # /dev/slack-app/new. The bot token that OAuth returns is stored

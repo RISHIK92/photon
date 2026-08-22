@@ -6,7 +6,7 @@ import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import { AgentAnswer } from "@/lib/evidence";
 import { getWorkspaceId } from "@/lib/api";
 import EvidencePanel from "./EvidencePanel";
-import AccountSummary from "./AccountSummary";
+import WorkspaceSummary from "./WorkspaceSummary";
 import CaptionsBridge from "./CaptionsBridge";
 import PokeButton from "./PokeButton";
 import CallSetup from "./CallSetup";
@@ -339,7 +339,7 @@ export default function CallPage() {
 
         <section className="flex flex-col min-h-0 h-full bg-neutral-900/30 border border-neutral-800 rounded-lg p-4">
           <div className="flex-1 min-h-0 overflow-y-auto">
-            {turns.length === 0 ? <AccountSummary /> : <EvidencePanel turns={turns} />}
+            {turns.length === 0 ? <WorkspaceSummary /> : <EvidencePanel turns={turns} />}
           </div>
 
           <div className="flex gap-2 mt-4 pt-4 border-t border-neutral-800 shrink-0">
