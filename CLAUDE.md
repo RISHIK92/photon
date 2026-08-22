@@ -23,13 +23,16 @@ yet. Both `OPENROUTER_API_KEY` and the model id were verified live against
 OpenRouter's `/models` list before wiring anything up.
 
 **New known constraint**: OpenRouter's routing to this model has highly
-variable latency in testing — most calls land in a few seconds, but some
-single agent turns have taken 2+ minutes with no error, just a slow
-upstream response. This is a real latency risk for the live-call demo
+variable latency in testing — most calls land in ~1s, but one single-call
+`httpx.ReadTimeout` was directly observed at 60s+ with no error, just a
+slow upstream response. This is a real latency risk for the live-call demo
 (Section 17's "gemini-2.5-pro is too slow for a live call" gotcha applies
-here too, just for a different reason). Worth benchmarking properly before
-Phase 4, and possibly worth a paid/dedicated OpenRouter tier or a faster
-model if it's consistently reproducible.
+here too, just for a different reason). `sync_chat` (`app/core/llm/
+openrouter.py`) now retries `ReadTimeout`/`ConnectTimeout` once (capped at
+2 total attempts, so a stuck call fails in a bounded ~90s rather than
+compounding with the 429/5xx retry budget) — a mitigation, not a fix. If
+this proves frequent during Phase 4 rehearsal, the real fix is a paid/
+dedicated OpenRouter tier or a different model, not more retry tuning.
 
 ## Current phase
 

@@ -34,13 +34,20 @@ def _headers() -> dict:
 
 
 def _is_retryable(exc: BaseException) -> bool:
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (429, 500, 502, 503)
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in (429, 500, 502, 503)
+    # Observed directly: some calls to this model via OpenRouter take 60s+
+    # with no error, just a slow upstream response — worth one retry rather
+    # than failing the whole agent turn outright, though a demo-time fix
+    # (dedicated tier / different model) is the real answer if this proves
+    # frequent. See CLAUDE.md.
+    return isinstance(exc, (httpx.ReadTimeout, httpx.ConnectTimeout))
 
 
 @retry(
     retry=retry_if_exception(_is_retryable),
     wait=wait_exponential(multiplier=2, min=2, max=30),
-    stop=stop_after_attempt(4),
+    stop=stop_after_attempt(2),
     reraise=True,
 )
 def sync_chat(prompt: str, max_tokens: int = 1500, temperature: float = 0.1, json_mode: bool = False) -> str:
