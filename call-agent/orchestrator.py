@@ -4,12 +4,14 @@ latest screen frame, and the HTTP call out to the Company Brain
 (adapters/base.py) — a concrete adapter calls into this; this module never
 imports a concrete adapter, only the base contract.
 
-Open mic, not explicit address: every finalized user turn is treated as
-addressed to the agent (per explicit user instruction — the build plan's
-original Phase 4 design used a "Photon" wake word instead; that's been
-dropped here). Trade-off worth knowing: with no wake word, side comments,
-talking to someone else on the call, or ambient chatter all get sent to
-the agent as if they were questions for it.
+Open mic, not explicit address: every finalized user turn is considered
+(per explicit user instruction — the build plan's original Phase 4 design
+used a "Photon" wake word instead; that's been dropped here). What used
+to be the wake-word gate is now `small_talk.classify()`: a local, regex-
+only triage that answers greetings instantly and stays silent on ambient
+chatter, so only real requests pay for the pipeline. Measured live before
+this existed: "Hello. How are you?" cost 4.5s and a needless search_docs
+call to answer a greeting.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import httpx
 import structlog
 
 from adapters.base import TransportAdapter
+from small_talk import GREETING_REPLY, Turn, classify
 
 log = structlog.get_logger()
 
@@ -80,6 +83,11 @@ class Orchestrator:
         return bool(VISUAL_HINT_RE.search(question)) and self.state.latest_screen_frame is not None
 
     async def _handle_turn(self, question: str) -> None:
+        intent = classify(question)
+        if intent is not Turn.ANSWER:
+            await self._handle_small_talk(question, intent)
+            return
+
         screen_image_b64 = None
         if self._wants_visual_context(question):
             # The brain-api does the actual vision call (app.core.llm.vision,
@@ -107,6 +115,26 @@ class Orchestrator:
             await self.adapter.speak(answer)
         else:
             log.warning("orchestrator.empty_answer", question=question, result=result)
+
+    async def _handle_small_talk(self, question: str, intent: Turn) -> None:
+        """Greetings get an instant canned line; ambient speech gets
+        nothing at all. Neither makes a factual claim, so the "no uncited
+        claim" rule is untouched — there is nothing here to cite."""
+        log.info("orchestrator.small_talk", intent=intent.value, text=question)
+        turn_id = f"{int(time.time() * 1000)}"
+        answer = GREETING_REPLY if intent is Turn.GREETING else ""
+
+        # Still traced, so the advanced panel shows a deliberate 0ms fast
+        # path rather than going blank as if the agent had missed the turn.
+        await self._publish({"type": "turn.requested", "turn_id": turn_id, "question": question, "source": "voice"})
+        await self._publish({"type": "turn.fastpath", "turn_id": turn_id, "source": "voice", "t": 0,
+                             "intent": intent.value})
+        await self._publish({"type": "turn.done", "turn_id": turn_id, "source": "voice", "t": 0, "ms": 0,
+                             "result": {"answer": answer or "(no reply — ambient speech)", "claims": [],
+                                        "confidence": "high", "abstained": False, "escalation": None,
+                                        "tool_trace": []}})
+        if answer:
+            await self.adapter.speak(answer)
 
     async def _ask_brain(self, question: str, screen_image_b64: str | None) -> dict | None:
         """Stream one turn from the brain-api, forwarding every trace event

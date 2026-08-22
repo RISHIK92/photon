@@ -109,6 +109,50 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — a greeting cost 4.5s and a needless search (open-mic fallout)
+
+Caught by the user in a live call, with the trace panel showing exactly
+why: **"Hello. How are you?" → plan 2.4s → `search_docs` 660ms → compose
+1.4s → 4.5s total**, to reply "Meridian is a B2B booking and scheduling
+platform." Correct and cited, and completely unnecessary — nobody asked
+what Meridian is. Root cause is the dropped wake word: with open mic,
+EVERY finalized utterance became a full pipeline turn, so the agent both
+burned latency on greetings and would talk over people who weren't
+addressing it. This is the "lighter-weight local gate" the wake-word
+removal note predicted would be needed.
+
+**`call-agent/small_talk.py` (new)** — regex-only triage, no LLM, no
+network, microseconds. Three outcomes: `GREETING` (instant canned line),
+`IGNORE` (say nothing at all), `ANSWER` (the real pipeline).
+
+The bias is deliberately asymmetric, and that's the whole design:
+silently ignoring a real customer question is far worse than wasting a
+turn on a greeting. So anything carrying a question mark, an interrogative,
+or a product/account word (`webhook`, `northwind`, `pricing`, `401`, …)
+goes to the pipeline no matter what else it matches — which is why
+"northwind's webhooks are broken" (no interrogative at all) and "hi
+Photon, why is Calico billed differently?" (starts with a greeting) both
+still get answered. Filler is matched as CHAINED CLAUSES, not one
+anchored alternation: real ambient speech is "yeah sorry", "One sec, the
+phone." — the single-pattern version only caught one-word cases.
+
+`orchestrator.py` calls it before anything else in `_handle_turn`, and
+still publishes a `turn.fastpath` trace event so the advanced panel shows
+a deliberate 0ms path rather than going blank as if the turn were missed
+(`client/lib/trace.ts` renders it as "Greeting — answered locally" /
+"Ambient speech — ignored"). The canned greeting makes no factual claim,
+so the "no uncited claim" rule is untouched — there is nothing to cite.
+
+**Verified**: `call-agent/tests/test_small_talk.py` — 37 cases, all
+passing, built from real live-test utterances plus the voice-shaped cases
+in `server/evals/agent_eval.py`'s HARD set. Then end to end through the
+real `Orchestrator` against a mock adapter: greeting **0ms** + instant
+reply, "One sec, the phone." **0ms** + silence, "yeah okay" **0ms** +
+silence, and the Bangalore question still runs the full pipeline and
+answers correctly.
+
+`call-agent/.venv` now has pytest (dev-only, not in requirements.txt).
+
 ### Eval — is it still accurate after the latency work? (`server/evals/`)
 
 The user pushed back on the latency result: fast is worthless if tool

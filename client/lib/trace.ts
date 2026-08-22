@@ -127,6 +127,20 @@ export function applyTraceEvent(
       if (str(event.question)) turn.question = str(event.question)!;
       break;
 
+    case "turn.fastpath":
+      // Answered locally with no LLM and no tools (a greeting, or ambient
+      // speech the agent deliberately stayed silent on). Shown so the
+      // panel reads as a deliberate 0ms path, not a missed turn.
+      upsertStage(turn, "fastpath", {
+        label: event.intent === "greeting" ? "Greeting — answered locally" : "Ambient speech — ignored",
+        startedT: t,
+        ms: 0,
+        marker: true,
+        state: "done",
+        detail: "no plan, no tools, no LLM",
+      });
+      break;
+
     case "vision.start":
       upsertStage(turn, "vision", { label: "Screen frame analysis", startedT: t, state: "running" });
       break;
