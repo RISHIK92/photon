@@ -35,9 +35,26 @@ log = structlog.get_logger()
 # now match, not just the original narrow "where do i"/"this screen" set.
 VISUAL_HINT_RE = re.compile(
     r"\b(where do i|i can'?t find|this screen|(on|check|look at|share|see) (my |the )?screen"
-    r"|what'?s on (my |the )?screen|help me (find|open|see|locate))\b",
+    r"|what'?s on (my |the )?screen|help me (find|open|see|locate)"
+    # Deictic phrasing — extremely common on a screen-share call and
+    # previously all missed, because none of them contain the word
+    # "screen" at all. Safe to add: a frame is only ever attached when one
+    # is genuinely fresh, i.e. the customer is sharing RIGHT NOW.
+    r"|what am i looking at|does (this|that) look (right|correct|ok)"
+    r"|am i (in|on) the right (place|page|screen)|what does (this|that) (say|mean)"
+    r"|is (this|that) (right|correct)|where do i click)\b",
     re.IGNORECASE,
 )
+
+
+# A screen frame is only meaningful while the customer is actually
+# sharing. Frames arrive at ~0.3-1fps during a share, so anything older
+# than this means the share stopped (or dropped) and the buffered frame no
+# longer shows what's on their screen. Without this the last frame lives
+# forever: the customer stops sharing, asks "what's on my screen?" twenty
+# minutes later, and the agent confidently describes a screen that hasn't
+# existed for twenty minutes — real bytes, dead reality.
+SCREEN_FRAME_TTL_SECONDS = 30.0
 
 
 @dataclass
@@ -80,7 +97,16 @@ class Orchestrator:
     # ── internals ─────────────────────────────────────────────────────────
 
     def _wants_visual_context(self, question: str) -> bool:
-        return bool(VISUAL_HINT_RE.search(question)) and self.state.latest_screen_frame is not None
+        if not VISUAL_HINT_RE.search(question):
+            return False
+        if self.state.latest_screen_frame is None:
+            return False
+        age = time.time() - self.state.latest_screen_frame_at
+        if age > SCREEN_FRAME_TTL_SECONDS:
+            log.info("orchestrator.screen_frame_stale", age_seconds=round(age, 1))
+            self.state.latest_screen_frame = None
+            return False
+        return True
 
     async def _handle_turn(self, question: str) -> None:
         intent = classify(question)

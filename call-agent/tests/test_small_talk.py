@@ -67,3 +67,30 @@ def test_empty_is_ignored():
 def test_long_utterance_is_never_swallowed():
     # Length alone protects against a filler prefix eating a real question.
     assert classify("okay so the thing is our integration keeps returning errors") is Turn.ANSWER
+
+
+# ── screen-share path ────────────────────────────────────────────────────
+# The gate runs BEFORE any visual handling, so a question about the screen
+# that gets classified as chatter would silently disable screen share.
+
+SCREEN_UTTERANCES = [
+    "check my screen and help me open the search bar?",
+    "can you see my screen",
+    "look at my screen",
+    "what's on my screen right now",
+    "where do I find the signing secret",
+    "what am I looking at",
+    "does this look right to you",
+    "am I in the right place",
+]
+
+
+@pytest.mark.parametrize("text", SCREEN_UTTERANCES)
+def test_screen_questions_reach_the_pipeline(text):
+    assert classify(text) is Turn.ANSWER
+
+
+@pytest.mark.parametrize("text", SCREEN_UTTERANCES)
+def test_screen_questions_are_recognised_as_visual(text):
+    from orchestrator import VISUAL_HINT_RE
+    assert VISUAL_HINT_RE.search(text), f"visual intent not detected: {text!r}"

@@ -109,6 +109,72 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Audit — screen share, code-level (2 real defects found and fixed)
+
+The user asked for a code-only check of the screen-share path (no browser
+test). Traced end to end: browser publishes SOURCE_SCREENSHARE ->
+`livekit_adapter._on_track_subscribed` -> `_pump_screen_frames` (VideoStream
+-> Pillow -> JPEG, 1024px cap, 1fps/0.3fps by speaking state) ->
+`orchestrator.on_frame` (buffers only `source == "screen"`) ->
+`_wants_visual_context` -> base64 -> `/api/agent/ask/stream` ->
+`_decode_frame` -> `answer_question(screen_image_bytes=...)` ->
+`describe_screen` -> a citable `source_type: "screen"` evidence item.
+The plumbing itself was intact — including through the streaming refactor
+(`_ask_brain` does forward `screen_image_base64`) and the small-talk gate
+(every screen-shaped utterance classifies as ANSWER, verified in tests).
+
+**Defect 1 — an already-active screen share was invisible.**
+`track_subscribed` only fires for tracks arriving AFTER the handler is
+attached, and `ctx.connect()` runs before it. So if the customer was
+already sharing when the agent joined, no frame ever arrived — silently,
+with the agent answering "I don't have access to your screen." **This is
+the common case, not an edge case**: it happens on every worker restart
+and every re-dispatch into a call already in progress (which happened
+twice during this session alone). Fixed with `_attach_existing_screenshare()`,
+sweeping `room.remote_participants` for a subscribed screenshare
+publication at startup. Also added `_start_screen_pump()`, which cancels a
+previous pump task before replacing it — stopping and restarting a share
+mid-call used to leak the old task.
+
+**Defect 2 — buffered frames never expired.** `latest_screen_frame_at`
+was written and never read; `_wants_visual_context` only checked `is not
+None`. When a share stops the pump ends but the last frame stays buffered
+forever, so "what's on my screen?" twenty minutes later would confidently
+describe a screen that no longer exists — real bytes, dead reality, and
+the sort of thing the standing "never fabricate" rule exists to prevent.
+Fixed with `SCREEN_FRAME_TTL_SECONDS = 30` (frames arrive at 0.3-1fps
+during an active share, so anything older means sharing stopped); a stale
+frame is dropped AND cleared.
+
+**Also widened `VISUAL_HINT_RE`** for deictic phrasing — "what am I
+looking at", "does this look right", "am I in the right place", "what does
+this say", "where do I click". None contain the word "screen", so all were
+previously missed. Safe to add because a frame is only ever attached when
+one is genuinely fresh, i.e. the customer is sharing right now.
+
+**Verified without a browser**: 58 tests in `call-agent/tests/` pass
+(`test_screen_frame.py` covers camera-frames-are-not-screen-frames, fresh
+frame used, stale frame dropped and cleared, no frame = not visual,
+non-visual question never attaches one). Then the full path in one
+process: a synthesized frame showing "Status: FAILING — last 47 deliveries
+returned 401" pushed through the real `Orchestrator` against the live
+brain-api produced "Your webhook delivery is failing with 401 errors
+[ev_d66d6fb9]. The last forty-seven deliveries were rejected" — the "47"
+appears nowhere in the seed corpus, so that is genuinely read off the
+image, not recalled.
+
+**Latency note**: a visual turn costs much more than a text one —
+measured `vision 3997ms + plan 1363ms + tools 1ms + compose 1954ms =
+7.4s`. The vision call alone is bigger than an entire normal turn. If
+sub-3s matters for screen-share questions too, that call is the target
+(smaller frame, or a faster vision model — the same measure-first
+approach as `evals/agent_eval.py`).
+
+**Untested by this audit** (needs a real browser, by definition): that
+Chrome's screen-share track actually reaches the worker as
+SOURCE_SCREENSHARE and that Pillow decodes those real frames. Every layer
+above that is now exercised.
+
 ### Fix — a greeting cost 4.5s and a needless search (open-mic fallout)
 
 Caught by the user in a live call, with the trace panel showing exactly

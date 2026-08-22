@@ -75,6 +75,14 @@ class LiveKitAdapter:
         agent = _InterceptAgent(self._callbacks, speaker_id=self._local_speaker_id())
 
         self._ctx.room.on("track_subscribed", self._on_track_subscribed)
+        # `track_subscribed` only fires for tracks that arrive AFTER this
+        # handler is attached — and ctx.connect() above has already run, so
+        # a participant who was ALREADY sharing their screen when the agent
+        # joined would never produce a single frame. That is the common
+        # case whenever the worker restarts or the agent is re-dispatched
+        # into a call that is already in progress, so sweep for existing
+        # screen-share tracks explicitly.
+        self._attach_existing_screenshare()
 
         await self._session.start(
             agent=agent,
@@ -85,6 +93,27 @@ class LiveKitAdapter:
 
     def _local_speaker_id(self) -> str:
         return self._ctx.room.local_participant.identity or "unknown"
+
+    def _attach_existing_screenshare(self) -> None:
+        for participant in self._ctx.room.remote_participants.values():
+            for publication in participant.track_publications.values():
+                if (
+                    publication.source == rtc.TrackSource.SOURCE_SCREENSHARE
+                    and publication.subscribed
+                    and publication.track is not None
+                ):
+                    log.info(
+                        "livekit_adapter.screen_share_already_active",
+                        participant=participant.identity,
+                    )
+                    self._start_screen_pump(publication.track)
+
+    def _start_screen_pump(self, track: rtc.Track) -> None:
+        # Replacing a live task would leak the old one; stop it first. This
+        # happens when a customer stops and restarts sharing mid-call.
+        if self._screen_task and not self._screen_task.done():
+            self._screen_task.cancel()
+        self._screen_task = asyncio.create_task(self._pump_screen_frames(track))
 
     def _on_track_subscribed(
         self,
@@ -97,7 +126,7 @@ class LiveKitAdapter:
         if publication.source != rtc.TrackSource.SOURCE_SCREENSHARE:
             return  # never feed the camera track in here — see module docstring
         log.info("livekit_adapter.screen_share_subscribed", participant=participant.identity)
-        self._screen_task = asyncio.create_task(self._pump_screen_frames(track))
+        self._start_screen_pump(track)
 
     async def _pump_screen_frames(self, track: rtc.Track) -> None:
         try:
