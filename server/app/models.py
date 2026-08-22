@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 from sqlmodel import Field, SQLModel, Column, JSON, Relationship
-from sqlalchemy import String, ForeignKey
+from sqlalchemy import String, ForeignKey, Integer
 
 
 # ─── User ─────────────────────────────────────────────────────────────────────
@@ -12,7 +12,17 @@ class User(SQLModel, table=True):
     __tablename__ = "users"
     id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     email: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
-    hashed_password: str
+    # Nullable: a user who signs up via "Continue with GitHub" has no
+    # password at all. core/auth.py's password-login path must check for
+    # None before calling verify_password, not pass it a None hash.
+    hashed_password: Optional[str] = None
+    # Set when signed up/linked via GitHub OAuth (routers/auth.py). Linking
+    # rule: match on github_id first, then fall back to matching the
+    # verified GitHub email against an existing User.email (so a user who
+    # signed up with email/password and later clicks "Continue with
+    # GitHub" gets linked to their existing account instead of a duplicate).
+    github_id: Optional[str] = Field(default=None, sa_column=Column(String, unique=True, nullable=True))
+    github_login: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -68,6 +78,31 @@ class WorkspaceRead(SQLModel):
     name: str
     is_personal: bool
     role: WorkspaceRole
+    created_at: datetime
+
+
+# ─── GitHub App installations ─────────────────────────────────────────────────
+# One row per "org/user installed the GitHub App and granted it access to
+# some repos", scoped to the workspace that installed it. Created by
+# routers/github_app.py's install callback; read by the repo picker to list
+# what's visible, and by tasks/ingestion.py to know which installation's
+# token to mint for cloning. See app/services/github_app_auth.py.
+
+class GitHubInstallation(SQLModel, table=True):
+    __tablename__ = "github_installations"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    installation_id: int = Field(sa_column=Column(Integer, unique=True, nullable=False, index=True))
+    account_login: str
+    account_type: str  # "User" or "Organization", as GitHub reports it
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class GitHubInstallationRead(SQLModel):
+    id: str
+    installation_id: int
+    account_login: str
+    account_type: str
     created_at: datetime
 
 
@@ -132,6 +167,13 @@ class Repo(RepoBase, table=True):
     # what authorisation is actually checked against.
     owner_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
     workspace_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True))
+    # Set only for repos imported via a GitHub App installation (the repo
+    # picker, routers/github_app.py) — used both to diff "already imported"
+    # vs "new" repos when the picker re-opens, and to know at clone time
+    # (tasks/ingestion.py) that a minted installation token should be used
+    # instead of the single static github_token.
+    github_repo_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True, index=True))
+    github_installation_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True, index=True))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     jobs: List["Job"] = Relationship(back_populates="repo", sa_relationship_kwargs={"cascade": "all, delete-orphan"})

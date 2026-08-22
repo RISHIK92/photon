@@ -21,6 +21,13 @@ class AgentAskRequest(BaseModel):
     screen_context: Optional[str] = None
     screen_image_base64: Optional[str] = None  # a JPEG frame, base64-encoded
     language: Optional[str] = None  # BCP-47 (te-IN, ta-IN, hi-IN, en-IN) — answer in this
+    # Only consulted when repo_id is omitted — lets the loop disambiguate
+    # across a workspace's repos instead of falling back to the single
+    # seed repo. This endpoint is still unauthenticated (see CLAUDE.md's
+    # Phase 3 note), so workspace_id here is client-asserted, not verified
+    # against a session — the same trust boundary as everything else on
+    # this route today, not a new gap introduced by this field.
+    workspace_id: Optional[str] = None
 
 
 def _decode_frame(payload: "AgentAskRequest") -> Optional[bytes]:
@@ -62,6 +69,7 @@ async def ask_stream(payload: AgentAskRequest):
                 screen_image_bytes,
                 on_event=sink,
                 language=payload.language,
+                workspace_id=payload.workspace_id,
             )
         except Exception as exc:  # noqa: BLE001 - report the failure to the client, don't hang it
             queue.put_nowait({"type": "turn.error", "t": 0, "seq": 0, "error": str(exc)})
@@ -99,6 +107,7 @@ async def ask(payload: AgentAskRequest, stream: bool = Query(default=False)):
         payload.screen_context,
         screen_image_bytes,
         language=payload.language,
+        workspace_id=payload.workspace_id,
     )
 
     if not stream:

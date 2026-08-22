@@ -16,6 +16,7 @@ from app.agent.prompts import build_compose_prompt, build_plan_prompt
 from app.core.llm.vision import describe_screen
 from app.agent.verifier import verify
 from app.seed.loader import get_seed_repo_id
+from app.services.workspace_repos import list_ready_repos
 from app.tools.evidence import make_evidence
 from app.tools.registry import TOOL_SCHEMAS, UnknownToolError, dispatch
 
@@ -27,6 +28,11 @@ MAX_TOOL_CALLS_TOTAL = 6
 MAX_CALLS_PER_ROUND = 4
 
 _REPO_ID_TOOLS = {t["name"] for t in TOOL_SCHEMAS if "repo_id" in t["parameters"]}
+# The only tools that can fall back to searching every repo in a workspace
+# at once (plain vector search, filterable by workspace_id) rather than
+# needing one specific repo (a Neo4j graph walk, a per-repo provenance
+# chain, a file read).
+_WORKSPACE_SEARCHABLE_TOOLS = {"search_code", "find_usages"}
 
 
 async def _run_one_call(
@@ -35,15 +41,32 @@ async def _run_one_call(
     tracer: TurnTracer,
     call_id: str,
     round_num: int,
+    workspace_id: str | None = None,
+    known_repo_ids: set[str] | None = None,
 ) -> dict:
     tool_name = call.get("tool")
     args = dict(call.get("args") or {})
-    if repo_id and tool_name in _REPO_ID_TOOLS:
-        # Always force the loop's own resolved repo_id, never trust the
-        # planner's guess — it doesn't reliably know the real UUID and a
-        # wrong guess (e.g. "meridian") silently empties out code evidence
-        # instead of erroring, which is much worse (caught while testing).
-        args["repo_id"] = repo_id
+    if tool_name in _REPO_ID_TOOLS:
+        if repo_id:
+            # Single-repo mode: always force the loop's own resolved
+            # repo_id, never trust the planner's guess — it doesn't
+            # reliably know the real UUID and a wrong guess (e.g.
+            # "meridian") silently empties out code evidence instead of
+            # erroring, which is much worse (caught while testing).
+            args["repo_id"] = repo_id
+        else:
+            # Multi-repo mode: no single repo was resolved up front, so
+            # trust the planner's repo_id ONLY if it's one of this
+            # workspace's actual repo ids (from the known_repos list in
+            # the plan prompt) — same "never trust a guess" principle,
+            # just extended to a set of valid ids instead of a single one.
+            guessed = args.get("repo_id")
+            if known_repo_ids and guessed in known_repo_ids:
+                args["repo_id"] = guessed
+            else:
+                args.pop("repo_id", None)
+            if workspace_id and tool_name in _WORKSPACE_SEARCHABLE_TOOLS:
+                args["workspace_id"] = workspace_id
 
     # Emitted BEFORE the await, so a client sees "search_code running…"
     # for the whole time it actually runs rather than only learning about
@@ -140,6 +163,7 @@ async def answer_question(
     screen_image_bytes: bytes | None = None,
     on_event: EventSink | None = None,
     language: str | None = None,
+    workspace_id: str | None = None,
 ) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
     escalation, tool_trace}. Safe to call with no call/session in progress.
@@ -157,9 +181,27 @@ async def answer_question(
     app.agent.events). Purely observational — the answer is byte-for-byte
     identical with or without it, and the loop never learns who's
     listening, so the transport-free rule still holds.
+
+    workspace_id: only consulted when repo_id is omitted. With no repo_id
+    and no workspace_id, falls back to the single seed repo (the original,
+    pre-multi-tenant behavior). With a workspace_id and exactly one READY
+    repo, that repo is resolved the same forced way a passed-in repo_id
+    would be — no ambiguity, nothing changes. With 2+ READY repos, the
+    loop switches to multi-repo mode: the plan prompt lists them
+    (app.agent.prompts' known_repos block) so the planner can name one
+    explicitly, and workspace-searchable tools fall back to searching
+    every repo in the workspace when it doesn't.
     """
+    known_repos: list[dict] = []
     if repo_id is None:
-        repo_id = get_seed_repo_id()
+        if workspace_id:
+            known_repos = await list_ready_repos(workspace_id)
+            if len(known_repos) <= 1:
+                repo_id = known_repos[0]["id"] if known_repos else None
+                known_repos = []
+        else:
+            repo_id = get_seed_repo_id()
+    known_repo_ids = {r["id"] for r in known_repos}
 
     tracer = TurnTracer(on_event)
     tracer.emit("turn.start", question=question)
@@ -193,7 +235,12 @@ async def answer_question(
             break
 
         plan_prompt = build_plan_prompt(
-            question, context_log, screen_context, is_first_round=(round_num == 0), language=language
+            question,
+            context_log,
+            screen_context,
+            is_first_round=(round_num == 0),
+            language=language,
+            known_repos=known_repos,
         )
         tracer.emit("plan.start", round=round_num + 1)
         plan_started = time.monotonic()
@@ -227,7 +274,15 @@ async def answer_question(
 
         outcomes = await asyncio.gather(
             *[
-                _run_one_call(c, repo_id, tracer, f"r{round_num + 1}c{i + 1}", round_num + 1)
+                _run_one_call(
+                    c,
+                    repo_id,
+                    tracer,
+                    f"r{round_num + 1}c{i + 1}",
+                    round_num + 1,
+                    workspace_id=workspace_id,
+                    known_repo_ids=known_repo_ids,
+                )
                 for i, c in enumerate(calls)
             ]
         )

@@ -14,7 +14,7 @@ import structlog
 
 from app.seed.loader import load_commits, load_prs, load_slack
 from app.tools.code import search_code
-from app.tools.evidence import make_evidence, tool_result
+from app.tools.evidence import make_evidence, tool_error, tool_result
 
 log = structlog.get_logger()
 
@@ -84,7 +84,12 @@ def _slack_thread_for(ticket_id: str | None, pr: dict | None) -> list[dict]:
     return thread
 
 
-async def explain_why(symbol_or_path: str, repo_id: str) -> dict:
+async def explain_why(symbol_or_path: str, repo_id: str | None = None) -> dict:
+    if not repo_id:
+        # code -> commit -> ticket -> PR -> Slack is a per-repo chain (the
+        # commit/PR fixtures are keyed by repo), so this can't fall back to
+        # a workspace-wide search the way search_code/find_usages do.
+        return tool_error("explain_why", "which repository? specify one of the known repos for this workspace")
     evidence: list[dict] = []
 
     file_path, code_evidence = await _locate_file(symbol_or_path, repo_id)

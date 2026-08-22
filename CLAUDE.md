@@ -38,11 +38,13 @@ dedicated OpenRouter tier or a different model, not more retry tuning.
 
 ## Current phase
 
-**Phase 5 — Evidence panel.** Phase 0 (environment) is complete — the
-manual two-person LiveKit test from its checklist is superseded by the
-Phase 4 live verification (worker joined a real room, real Deepgram
-STT/TTS). Phases 1-4 are complete — see their sections below. Phase 5
-status below.
+**Phase A, Slice 4 — multi-repo disambiguation.** Phase 0 (environment) is
+complete — the manual two-person LiveKit test from its checklist is
+superseded by the Phase 4 live verification (worker joined a real room,
+real Deepgram STT/TTS). Phases 1-5 are complete — see their sections
+below. Phase A (login, workspaces, real repo ingestion) is in progress:
+Slices 1-4 (tenant boundary, client auth, GitHub App, multi-repo
+disambiguation) are done — see their sections below.
 
 ### Phase 5 — evidence panel (done)
 
@@ -109,6 +111,62 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+## GitHub App — setup, and the three bugs that blocked it
+
+The App exists and is live: **Photon-githubabcd**, app id `4684753`, owner
+`@RISHIK92`, permissions `contents: read` + `metadata: read`. Verified by
+signing an App JWT and calling GitHub's own `GET /app` -> 200.
+
+**Operator setup (one time, per deployment):** visit
+`/dev/github-app/new` (dev-only route, never linked from the product),
+click "Create GitHub App" on GitHub, then paste the returned credentials
+into `server/.env`. `public_base_url` must match what the App is
+registered with.
+
+Three bugs sat in the path, each of which failed in a way that pointed
+somewhere unhelpful:
+
+1. **Manifest rejected: "at least one callback URL is required."**
+   The manifest set `request_oauth_on_install` but no `callback_urls` —
+   which is a DIFFERENT field from `redirect_url` (that one only receives
+   the one-time manifest-conversion code). Both real OAuth landing points
+   must be listed, or the flows 404/mismatch at runtime:
+   `/api/auth/github/callback` (sign-in, routers/auth.py) and
+   `/api/integrations/github/callback` (install, routers/github_app.py).
+
+2. **Callback 500'd AFTER the App was created — credentials lost.**
+   `data.get("webhook_secret", "")` returns `None`, not `""`: a default
+   only applies to a MISSING key, and GitHub returns the key present with
+   a null value when the App has no webhook. `html.escape(None)` then
+   threw, and because the manifest code is single-use, the client secret
+   and PEM were unrecoverable — the App had to be re-keyed by hand from
+   its settings page. Now null-tolerant.
+
+3. **`Invalid symbol 92` when signing the JWT.** 92 is ASCII for
+   backslash. A PEM is multi-line and `.env` is line-based, so the key is
+   stored with literal `\n` — and nothing ever unescaped it, so the
+   crypto library received actual backslashes. Fixed with a
+   `field_validator` on `github_app_private_key` in `config.py`, so every
+   consumer gets a real PEM; it tolerates escaped one-liners, quoted
+   values, and already-real multi-line PEMs.
+
+**Design correction while configuring it**: the install callback reads
+only `installation_id` + `state` and never an OAuth `code` — it
+authenticates as the App (JWT). So the right mechanism is the App's
+**Setup URL**, not `request_oauth_on_install`. With OAuth-on-install the
+post-install redirect goes to a *callback* URL, and with two registered
+there is no guarantee GitHub picks the install one rather than the
+sign-in one. The manifest now sets `setup_url` + `setup_on_update` and
+leaves `request_oauth_on_install` false; sign-in is unaffected, since it
+is its own flow through the callback URLs.
+
+**Verified end to end** (server side): App JWT signs -> GitHub `/app`
+200 -> `/api/auth/github/login` 307s to github.com/login/oauth/authorize
+with the right redirect_uri -> `POST /api/integrations/github/connect`
+returns a real `https://github.com/apps/photon-githubabcd/installations/new?state=…`
+URL. `installations: 0` — nobody has installed it on an account yet,
+which is the next step and needs a human to click Install.
+
 ## Phase A — login, workspaces, and real repo ingestion
 
 Moving from a single-tenant demo to something a user logs into and points
@@ -165,6 +223,145 @@ the real enforcement stays server-side (see the tenancy tests).
 hardened version is an httpOnly cookie set by a Next route handler
 proxying the API. This build talks to the brain-api directly from the
 browser, so the token must be reachable from JS.
+
+### Slice 3 — GitHub App: OAuth login + private-org repo access (done)
+
+User request: private orgs need real GitHub access, not a pasted public
+URL + one shared static `GITHUB_TOKEN`. One GitHub App now covers both
+"Sign in with GitHub" (an alternative to email/password, not a
+replacement) and "Connect GitHub" (per-workspace installation, so an org
+admin grants access to selected repos and the user then picks which of
+those to actually import). No webhook in this pass — deliberately: this
+deployment binds to localhost with no public URL for GitHub to reach, so
+the repo picker computes the new-vs-already-imported diff live, on every
+open, by calling GitHub's API directly. A real webhook is a documented
+follow-up, not a gap in the feature as shipped.
+
+**Backend** — `server/app/services/github_app_auth.py` (RS256 app-JWT via
+the existing `python-jose[cryptography]`, no second JWT library; Redis-
+cached installation tokens, `EX=3300`, 5min margin under GitHub's 60min
+expiry), `server/app/routers/auth.py` (`GET /github/login` /
+`GET /github/callback` — OAuth login, links to an existing `User` by
+email or creates one with `hashed_password=None`), `server/app/routers/
+github_app.py` (install + repo picker + diff-based import),
+`server/app/routers/dev_github_setup.py` (one-time manifest-flow
+bootstrap, mounted only outside production, never linked from product
+UI). New `GitHubInstallation` table; `User.github_id`/`github_login`;
+`Repo.github_repo_id`/`github_installation_id`. Migration: 7 idempotent
+`ALTER TABLE` statements in `database.py`, verified applied via `psql`.
+
+**Design correction made during implementation, not in the original
+plan**: install-initiation can't be a plain `<a href>` — a top-level
+browser navigation can't carry an `Authorization: Bearer` header, so
+there'd be no way to know which user/workspace is installing. Fixed as
+`POST /connect` (normal authenticated fetch, returns `{url}`) with the
+client doing `window.location.href = url`; workspace binding flows
+through a single-use Redis nonce (`gh:install_nonce:{nonce}`, TTL 600s,
+passed to GitHub as `state`) instead of a token-bearing redirect. Also:
+the OAuth token lands in the callback redirect as a URL **fragment**
+(`#token=...`), never a query string, so it never hits server access
+logs or a Referer header.
+
+**Real pre-existing bug fixed along the way**: `repo_fetcher.py::
+clone_github_repo` logged the token-embedded clone URL directly. Fixed
+with a redaction regex before any log call — applies to both the static
+`GITHUB_TOKEN` and installation tokens.
+
+**Frontend**: `client/lib/api.ts` (`githubLoginUrl`, `startGithubInstall`,
+`listGithubInstallations`, `listInstallationRepos`, `importGithubRepos`),
+"Continue with GitHub" on `/login`, new `client/app/auth/callback/page.tsx`
+(reads `#token=`, stores it, redirects to `/dashboard`), `/dashboard`'s
+GitHub `SourceCard` replaced with a real "Connect GitHub" button and a
+repo-picker section that opens automatically on `?installation=connected`
+(fetches the workspace's installations, opens the most recently created
+one — the redirect doesn't carry `installation_id`, so multiple
+concurrent installations would all show the latest one's picker; a real
+edge case, just not one this pass needed to solve).
+
+**Verified**: server imports cleanly, live-reloads without error, `/dev/
+github-app/new` returns 200, `POST /api/integrations/github/connect`
+correctly 401s unauthenticated, existing email/password login regression-
+tested (still works for the pre-existing test account), DB migration
+columns/table confirmed via `psql`, `npx tsc --noEmit` clean on the
+frontend. **Not verified by me**: the actual GitHub click-through (manifest
+creation, installing the app on a real org) — that needs the user's own
+GitHub account and can't be done headlessly.
+
+### Slice 4 — multi-repo disambiguation (done)
+
+User's question, paraphrased: once a workspace has ingested 10-15 repos,
+how does the agent know *which* repo a question is about? Answer at the
+time: it didn't — `app/agent/loop.py` force-injected a single `repo_id`
+(from `get_seed_repo_id()`, the fictional Meridian corpus) into every
+repo-scoped tool call, full stop. Any real multi-repo workspace would have
+silently searched the wrong repo, or the seed repo, for every question.
+
+**Two-part fix, mirroring the existing `known_accounts` pattern** (the
+planner already resolves a customer name to an `account_id` the same way):
+
+1. **Qdrant chunks are now tagged with `workspace_id` at ingest time**
+   (`app/tasks/ingestion.py`, one line added to the existing per-chunk
+   loop) alongside the `repo_id` tag they already had. `vector_search()`
+   (`app/core/embedding/embedder.py`) gained a `workspace_id` param: pass
+   a `repo_id` and it filters to that repo exactly as before (unchanged,
+   zero behavior change for the single-repo/demo path); pass `workspace_id`
+   with `repo_id=None` and it filters to every repo in that workspace at
+   once, so relevance ranking across repos decides which repo's chunks
+   actually answer the question. Repos ingested before this change have no
+   `workspace_id` payload and won't be found this way — only affects the
+   seed corpus, which is always addressed by explicit `repo_id` anyway.
+
+2. **`answer_question()` (`app/agent/loop.py`) gained a `workspace_id`
+   param**, only consulted when `repo_id` is omitted. Resolution:
+   - no `repo_id`, no `workspace_id` -> unchanged, falls back to the seed
+     repo (`get_seed_repo_id()`) — the original single-tenant demo path.
+   - `workspace_id` given, workspace has 0 or 1 READY repos -> resolved
+     the same forced way an explicit `repo_id` always was. No ambiguity,
+     nothing new to reason about.
+   - `workspace_id` given, 2+ READY repos -> **multi-repo mode**. The plan
+     prompt (`app/agent/prompts.py`) grows a "Known repos in this
+     workspace" block (id + name, same shape as `known_accounts`), and the
+     planner is told: name a specific repo -> pass its exact id; ambiguous
+     or no repo named -> omit `repo_id` entirely. `search_code` and
+     `find_usages` (the two tools that are plain vector search under the
+     hood) then search across the whole workspace via `workspace_id`.
+     `trace_symbol`, `read_file`, `explain_why`, `check_conflict` can't —
+     a Neo4j graph walk, a file read, and a provenance/conflict chain are
+     inherently per-repo — so those four now return a clear tool error
+     ("which repository? specify one of the known repos for this
+     workspace") instead of crashing, when no repo could be resolved.
+   - Same "never trust a guess" principle as the existing repo_id-override
+     logic, just widened from one id to a set: a planner-supplied `repo_id`
+     is only honored if it's actually in that workspace's known-repos list
+     (`_run_one_call`'s `known_repo_ids` check); anything else is dropped
+     rather than passed through, so a hallucinated repo id can't silently
+     return empty results for the wrong repo.
+
+**Deliberately out of scope, and said so explicitly rather than left
+implicit**: `POST /api/agent/ask(/stream)` is still fully unauthenticated
+(documented demo-scope decision, unchanged) — `workspace_id` on that
+request is client-asserted, not verified against any session, same trust
+boundary as everything else on that route today. `call-agent/orchestrator.py`
+still has no workspace concept at all (hardcoded `photon` LiveKit room, no
+login) — wiring a live call to a specific workspace is a separate, larger
+"multi-tenant call agent" problem this pass didn't touch. The one reachable
+integration point today is the web console's text-input fallback
+(`client/app/call/page.tsx`), which now best-effort forwards
+`getWorkspaceId()` from localStorage if the browser also has a dashboard
+session.
+
+**Verified live against the running stack** (Postgres/Qdrant/Neo4j, not
+mocked): all 9 `test_agent_loop.py` + `test_verifier.py` tests and all 9
+`test_tenancy.py` tests still pass unchanged. Directly exercised
+`_run_one_call`'s new branching: a bogus planner-guessed repo id is
+dropped and `workspace_id` is injected for `search_code`; a real
+known-repo id is trusted through; `trace_symbol` with no resolvable repo
+returns a clean tool error instead of crashing. Created a real workspace
+with 2 READY repos + 1 still-INGESTING repo in Postgres and confirmed
+`list_ready_repos()` returns only the 2 READY ones. Confirmed
+`answer_question()`'s three resolution branches (0 repos, 1 repo, and the
+existing seed-repo fallback) all complete without error. `npx tsc
+--noEmit` clean.
 
 ### Ingest speed — 40.1s -> 16.5s, and it barely grows with repo size
 

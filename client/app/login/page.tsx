@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { login, signup } from "@/lib/api";
+import { githubLoginUrl, login, signup } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -67,6 +67,19 @@ export default function LoginPage() {
         </form>
 
         {error && <p className="text-red-400 text-sm mt-3">{error}</p>}
+
+        <div className="flex items-center gap-2 my-4 text-xs text-neutral-600">
+          <div className="flex-1 h-px bg-neutral-800" />
+          or
+          <div className="flex-1 h-px bg-neutral-800" />
+        </div>
+
+        <a
+          href={githubLoginUrl()}
+          className="flex items-center justify-center gap-2 border border-neutral-700 hover:border-neutral-500 rounded px-4 py-2 text-sm font-medium"
+        >
+          Continue with GitHub
+        </a>
 
         <button
           onClick={() => {

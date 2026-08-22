@@ -81,10 +81,7 @@ usually enough. Do not also call list_accounts, get_incidents, search_tickets, a
 - If a previous round's results already give you enough evidence to answer, or no further \
 call could plausibly help, return an empty "calls" list.
 
-For any tool that takes a repo_id: you don't know the real repo id, so omit it entirely — \
-it's filled in automatically. Do not guess a value like "meridian"; an omitted repo_id is \
-filled in correctly, a guessed one silently returns no results.
-
+{repo_guidance}
 Respond with ONLY a JSON object, no markdown fences, no commentary. Emit it as a single \
 line with no indentation or newlines — pretty-printed JSON costs output tokens, and output \
 tokens are wall-clock latency on a live call (measured: the same plan took 1421ms \
@@ -144,6 +141,31 @@ def _format_accounts() -> str:
     return "\n".join(f"- {a['id']}: {a['name']} (tier={a['tier']}, city={a['home_city']})" for a in load_accounts())
 
 
+# This workspace has exactly one repo (or none), so the loop always forces
+# the resolved repo_id onto every repo-scoped call regardless of what the
+# planner writes here — same as before the multi-repo work existed.
+_REPO_GUIDANCE_SINGLE = """For any tool that takes a repo_id: you don't know the real repo id, so omit it \
+entirely — it's filled in automatically. Do not guess a value like "meridian"; an omitted repo_id is \
+filled in correctly, a guessed one silently returns no results.
+"""
+
+_REPO_GUIDANCE_MULTI = """Known repos in this workspace (map a repo the question names or clearly implies to \
+its exact id before calling a repo-scoped tool):
+{known_repos}
+
+For any tool that takes a repo_id: if the question names or clearly implies one of the repos above \
+(e.g. "in the payments-service repo", "the frontend", "billing-api") pass that repo's exact id from \
+the list. If it's ambiguous or doesn't reference a specific repo, omit repo_id — search_code and \
+find_usages will then search across every repo in this workspace and let relevance decide; other \
+repo-scoped tools need one specific repo and will ask you to narrow it down instead of guessing. \
+Never invent a repo id that isn't in the list above.
+"""
+
+
+def _format_repos(known_repos: list[dict]) -> str:
+    return "\n".join(f"- {r['id']}: {r['name']}" for r in known_repos)
+
+
 def _format_evidence(evidence: list[dict]) -> str:
     if not evidence:
         return "(none)"
@@ -174,6 +196,7 @@ def build_plan_prompt(
     screen_context: str | None,
     is_first_round: bool = True,
     language: str | None = None,
+    known_repos: list[dict] | None = None,
 ) -> str:
     screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
     context_block = f"{context}\n" if context else ""
@@ -199,6 +222,12 @@ def build_plan_prompt(
         # city" — grounded in real evidence, but the wrong evidence.
         nudge += _PLAN_LANGUAGE_HINT.format(language_name=LANGUAGE_NAMES.get(language, language))
 
+    repo_guidance = (
+        _REPO_GUIDANCE_MULTI.format(known_repos=_format_repos(known_repos))
+        if known_repos
+        else _REPO_GUIDANCE_SINGLE
+    )
+
     return _PLAN_PROMPT.format(
         system_rules=SYSTEM_RULES,
         tool_schemas=_format_schemas(),
@@ -207,6 +236,7 @@ def build_plan_prompt(
         question=question,
         screen_context_block=screen_block,
         first_round_nudge=nudge,
+        repo_guidance=repo_guidance,
     )
 
 

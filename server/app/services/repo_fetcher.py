@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,16 @@ from app.config import get_settings
 
 log = structlog.get_logger()
 settings = get_settings()
+
+_CREDENTIAL_IN_URL_RE = re.compile(r"https://[^@/]+@")
+
+
+def _redact(url: str) -> str:
+    """Strip an embedded token/credential before a clone URL ever reaches a
+    log line. Bug found in a code audit: this used to log the token-
+    embedded URL directly (both a static PAT and, once GitHub App
+    installation tokens exist, an equally sensitive short-lived token)."""
+    return _CREDENTIAL_IN_URL_RE.sub("https://", url)
 
 
 def clone_github_repo(url: str, repo_id: str, token: Optional[str] = None) -> str:
@@ -25,7 +36,7 @@ def clone_github_repo(url: str, repo_id: str, token: Optional[str] = None) -> st
         if url.startswith("https://"):
             url = url.replace("https://", f"https://{token}@")
 
-    log.info("cloning_repo", url=url, dest=str(dest))
+    log.info("cloning_repo", url=_redact(url), dest=str(dest))
     git.Repo.clone_from(url, str(dest), depth=1)
     log.info("clone_complete", dest=str(dest))
     return str(dest)

@@ -4,6 +4,7 @@ import "@livekit/components-styles";
 import { useCallback, useState } from "react";
 import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import { AgentAnswer } from "@/lib/evidence";
+import { getWorkspaceId } from "@/lib/api";
 import EvidencePanel from "./EvidencePanel";
 import AccountSummary from "./AccountSummary";
 import CaptionsBridge from "./CaptionsBridge";
@@ -101,10 +102,17 @@ export default function CallPage() {
       // The event stream, not the plain POST: same answer, but the
       // advanced panel gets each plan/tool/compose step as it happens
       // instead of a single silent wait of tens of seconds.
+      // Best-effort: this join page isn't behind login, but if this
+      // browser also has a workspace selected from the dashboard, use it
+      // so the agent can disambiguate across that workspace's repos
+      // instead of falling back to the single seed repo. See CLAUDE.md's
+      // multi-repo disambiguation note — the agent endpoint itself is
+      // still unauthenticated, so this is client-asserted, not verified.
+      const workspace_id = getWorkspaceId() || undefined;
       const res = await fetch(`${BRAIN_API_URL}/api/agent/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, workspace_id }),
       });
       if (!res.ok || !res.body) throw new Error(`brain-api returned ${res.status}`);
 

@@ -46,3 +46,27 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE repos ADD COLUMN IF NOT EXISTS ingest_seconds DOUBLE PRECISION"
         ))
+        # GitHub App support: OAuth login linking (users.github_id/login,
+        # password now optional) and per-repo installation tagging (for the
+        # picker's already-imported diff and installation-token cloning).
+        await conn.execute(text(
+            "ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS github_id VARCHAR UNIQUE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login VARCHAR"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS github_repo_id INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS github_installation_id INTEGER"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_repos_github_repo_id ON repos (github_repo_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_repos_github_installation_id ON repos (github_installation_id)"
+        ))

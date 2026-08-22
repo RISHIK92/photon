@@ -24,7 +24,11 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed: Optional[str]) -> bool:
+    # A GitHub-only account has hashed_password=None — must fail the check,
+    # not crash bcrypt with a None hash.
+    if not hashed:
+        return False
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 

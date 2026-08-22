@@ -15,6 +15,8 @@ from app.routers import auth
 from app.routers import onboarding
 from app.routers import tools
 from app.routers import agent
+from app.routers import github_app
+from app.routers import dev_github_setup
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -116,6 +118,12 @@ app.include_router(workspaces.router,   prefix="/api/workspaces",  tags=["worksp
 app.include_router(onboarding.router,   prefix="/api/repos",       tags=["onboarding"])
 app.include_router(tools.router,        prefix="/api/tools",       tags=["tools"])  # unauthenticated for the demo, see CLAUDE.md
 app.include_router(agent.router,        prefix="/api/agent",       tags=["agent"])  # unauthenticated for the demo, see CLAUDE.md
+app.include_router(github_app.router,   prefix="/api/integrations/github", tags=["github"])
+
+# Dev-only GitHub App manifest bootstrap — never linked from product UI,
+# not mounted in production. See app/routers/dev_github_setup.py.
+if settings.app_env != "production":
+    app.include_router(dev_github_setup.router, prefix="/dev", tags=["dev"])
 
 
 # ─── WebSocket endpoint ───────────────────────────────────────────────────────

@@ -93,34 +93,51 @@ def upsert_chunks(chunks: list[Chunk]) -> None:
     log.info("embedder.upserted", count=len(points))
 
 
-def _sync_vector_search(repo_id: str, question: str, top_k: int) -> list[dict]:
-    """Synchronous inner search — runs in a thread executor."""
+def _sync_vector_search(
+    repo_id: str | None, question: str, top_k: int, workspace_id: str | None = None
+) -> list[dict]:
+    """Synchronous inner search — runs in a thread executor.
+
+    repo_id=None + workspace_id set searches every repo in that workspace
+    (chunks are tagged with workspace_id at ingest time — see
+    app.tasks.ingestion) and lets relevance ranking sort out which repo's
+    chunks actually answer the question. This is the multi-repo case: a
+    workspace with several repos and no explicit repo named in the
+    question. repo_id still wins when given — same single-repo behavior
+    as before.
+    """
     qdrant = get_qdrant()
 
     query_vec = embed_texts([question], input_type="query")[0]
+
+    if repo_id:
+        query_filter = Filter(must=[FieldCondition(key="repo_id", match=MatchValue(value=repo_id))])
+    elif workspace_id:
+        query_filter = Filter(must=[FieldCondition(key="workspace_id", match=MatchValue(value=workspace_id))])
+    else:
+        query_filter = None
 
     hits = qdrant.search(
         collection_name=COLLECTION,
         query_vector=query_vec,
         limit=top_k,
-        query_filter=Filter(
-            must=[FieldCondition(key="repo_id", match=MatchValue(value=repo_id))]
-        ),
+        query_filter=query_filter,
         with_payload=True,
     )
     results = [hit.payload for hit in hits if hit.payload]
-    log.info("embedder.search", repo_id=repo_id, hits=len(results))
+    log.info("embedder.search", repo_id=repo_id, workspace_id=workspace_id, hits=len(results))
     return results
 
 
 async def vector_search(
-    repo_id: str,
+    repo_id: str | None,
     question: str,
     top_k: int = 10,
+    workspace_id: str | None = None,
 ) -> list[dict]:
     """Embed the query and search Qdrant. Runs blocking I/O in a thread."""
     return await asyncio.get_event_loop().run_in_executor(
-        None, _sync_vector_search, repo_id, question, top_k
+        None, _sync_vector_search, repo_id, question, top_k, workspace_id
     )
 
 

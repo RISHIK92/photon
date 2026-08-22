@@ -21,7 +21,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "description": "Semantic search over the ingested repo's source code.",
         "parameters": {
             "query": {"type": "string", "required": True},
-            "repo_id": {"type": "string", "required": True},
+            "repo_id": {"type": "string", "required": False},
             "top_k": {"type": "integer", "required": False, "default": 8},
         },
     },
@@ -38,7 +38,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "description": "Find usages/references of a symbol across the codebase.",
         "parameters": {
             "symbol": {"type": "string", "required": True},
-            "repo_id": {"type": "string", "required": True},
+            "repo_id": {"type": "string", "required": False},
         },
     },
     {

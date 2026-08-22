@@ -36,7 +36,9 @@ Line 1: one word — agrees, conflicts, or insufficient
 Line 2: under 20 words, citing the specific numbers/facts that agree or disagree."""
 
 
-async def check_conflict(claim: str, repo_id: str) -> dict:
+async def check_conflict(claim: str, repo_id: str | None = None) -> dict:
+    if not repo_id:
+        return tool_error("check_conflict", "which repository? specify one of the known repos for this workspace")
     docs_result = await search_docs(claim, top_k=1)
     code_result = await search_code(claim, repo_id, top_k=1)
 

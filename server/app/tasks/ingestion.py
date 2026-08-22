@@ -88,6 +88,8 @@ def run_ingestion(self, repo_id: str, job_id: str):
             repo_url = repo.source_url
             repo_name = repo.name
             existing_path = repo.local_path
+            github_installation_id = repo.github_installation_id
+            workspace_id = repo.workspace_id
 
         # ── Phase 1: Fetch ─────────────────────────────────────────────────
         publish("cloning", 5, "Fetching repository...")
@@ -96,10 +98,16 @@ def run_ingestion(self, repo_id: str, job_id: str):
         if existing_path:
             local_path = existing_path
         elif repo_source == RepoSourceType.GITHUB:
-            local_path = clone_github_repo(
-                repo_url, repo_id,
-                token=settings.github_token or None
-            )
+            if github_installation_id:
+                # Imported via the GitHub App picker — use a short-lived,
+                # narrowly-scoped installation token instead of the single
+                # static GITHUB_TOKEN (which may not even have access to a
+                # private org repo brought in this way).
+                from app.services.github_app_auth import get_installation_token
+                clone_token = get_installation_token(github_installation_id)
+            else:
+                clone_token = settings.github_token or None
+            local_path = clone_github_repo(repo_url, repo_id, token=clone_token)
         elif repo_source == RepoSourceType.LOCAL:
             local_path = use_local_path(repo_url, repo_id)
         else:
@@ -243,6 +251,13 @@ def run_ingestion(self, repo_id: str, job_id: str):
                         continue
 
             chunks = chunk_file(repo_id, rel_path, parsed, local_path)
+            # Tagged here rather than threaded through chunk_file()'s
+            # signature — metadata is spread straight into the Qdrant
+            # payload by upsert_chunks(), and this is the only thing a
+            # cross-repo workspace search (app.agent.loop's multi-repo
+            # disambiguation) needs beyond what chunker.py already builds.
+            for c in chunks:
+                c.metadata["workspace_id"] = workspace_id
             all_chunks.extend(chunks)
 
         publish("embedding", 70, f"Chunked into {len(all_chunks)} segments. Embedding...")

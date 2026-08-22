@@ -45,18 +45,33 @@ def _graph_node_to_evidence(node: dict, score: float = 0.55) -> dict:
     return make_evidence("code", path, snippet, score)
 
 
-async def search_code(query: str, repo_id: str, top_k: int = 8) -> dict:
+async def search_code(query: str, repo_id: str | None = None, workspace_id: str | None = None, top_k: int = 8) -> dict:
+    # Cross-repo mode: no specific repo named, so search every repo in the
+    # workspace and let relevance ranking sort out which repo's chunks
+    # actually answer the question (app.agent.loop's multi-repo
+    # disambiguation — see CLAUDE.md). Chunks are tagged with workspace_id
+    # at ingest time (app.tasks.ingestion); repos ingested before that
+    # change have no workspace_id payload and won't be found this way.
+    if not repo_id and not workspace_id:
+        return tool_error("search_code", "no repo_id or workspace_id given — nothing to search")
     try:
-        chunks = await vector_search(repo_id, query, top_k=top_k)
+        chunks = await vector_search(repo_id, query, top_k=top_k, workspace_id=workspace_id)
     except Exception as exc:  # noqa: BLE001 - surfaced as a typed tool error, not a 500
         log.error("tool.search_code_error", error=str(exc))
         return tool_error("search_code", f"search_code failed: {exc}")
 
     evidence = [_chunk_to_evidence(c, i, len(chunks)) for i, c in enumerate(chunks)]
-    return tool_result("search_code", evidence, note=None if evidence else f"no code matched '{query}' in this repo")
+    return tool_result("search_code", evidence, note=None if evidence else f"no code matched '{query}'")
 
 
-async def trace_symbol(symbol: str, repo_id: str) -> dict:
+async def trace_symbol(symbol: str, repo_id: str | None = None) -> dict:
+    if not repo_id:
+        # Unlike search_code/find_usages, this walks the Neo4j module graph,
+        # which is per-repo — there's no cross-repo graph to fall back to.
+        # The loop only leaves repo_id unset here when the planner's guess
+        # didn't match a real repo in the workspace, so ask it to narrow
+        # down rather than guessing which repo's graph to walk.
+        return tool_error("trace_symbol", "which repository? specify one of the known repos for this workspace")
     try:
         chunks, graph_nodes = await hybrid_retrieve(
             repo_id=repo_id, question=f"what calls or is called by {symbol}", intent=QueryIntent.RELATIONAL
@@ -72,9 +87,13 @@ async def trace_symbol(symbol: str, repo_id: str) -> dict:
     )
 
 
-async def find_usages(symbol: str, repo_id: str) -> dict:
+async def find_usages(symbol: str, repo_id: str | None = None, workspace_id: str | None = None) -> dict:
+    if not repo_id and not workspace_id:
+        return tool_error("find_usages", "no repo_id or workspace_id given — nothing to search")
     try:
-        chunks = await vector_search(repo_id, f"usages and references of {symbol}", top_k=10)
+        chunks = await vector_search(
+            repo_id, f"usages and references of {symbol}", top_k=10, workspace_id=workspace_id
+        )
     except Exception as exc:  # noqa: BLE001
         log.error("tool.find_usages_error", error=str(exc))
         return tool_error("find_usages", f"find_usages failed: {exc}")
@@ -83,7 +102,10 @@ async def find_usages(symbol: str, repo_id: str) -> dict:
     return tool_result("find_usages", evidence, note=None if evidence else f"no usages found for '{symbol}'")
 
 
-async def read_file(path: str, repo_id: str, start: int | None = None, end: int | None = None) -> dict:
+async def read_file(path: str, repo_id: str | None = None, start: int | None = None, end: int | None = None) -> dict:
+    if not repo_id:
+        return tool_error("read_file", "which repository? specify one of the known repos for this workspace")
+
     from sqlmodel import Session, create_engine
 
     from app.config import get_settings

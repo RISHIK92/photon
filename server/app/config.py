@@ -1,7 +1,7 @@
 from __future__ import annotations
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -85,8 +85,55 @@ class Settings(BaseSettings):
     voyage_api_key: str = Field(default="", alias="VOYAGE_API_KEY")
     voyage_embedding_model: str = "voyage-code-3"
 
-    # GitHub
+    # GitHub — a single static PAT, used only as a fallback for repos
+    # connected by pasting a URL. Real org/private-repo access goes through
+    # the GitHub App below instead (app/services/github_app_auth.py).
     github_token: str = ""
+
+    # GitHub App — "Sign in with GitHub" (routers/auth.py) and per-workspace
+    # "Connect GitHub" installations (routers/github_app.py). Populated by
+    # the one-time manifest bootstrap flow (routers/dev_github_setup.py);
+    # empty until that's run once. github_app_private_key is a PEM string —
+    # set it in .env with literal "\n" for newlines, e.g.
+    # GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMII...\n-----END RSA PRIVATE KEY-----\n"
+    github_app_id: str = ""
+    github_app_slug: str = ""
+    github_app_client_id: str = ""
+    github_app_client_secret: str = ""
+    github_app_private_key: str = ""
+    github_app_webhook_secret: str = ""  # captured now; no webhook endpoint consumes it yet
+
+    @field_validator("github_app_private_key")
+    @classmethod
+    def _normalise_pem(cls, value: str) -> str:
+        """Turn a .env-friendly one-line PEM back into a real PEM.
+
+        A private key is multi-line, and .env files are line-based, so the
+        key has to be stored with literal backslash-n. Nothing unescaped it
+        before, so the crypto library received actual backslashes and
+        failed with `InvalidData(Invalid symbol 92, offset 0)` — 92 being
+        the ASCII code for "\\". Doing it here means every consumer
+        (JWT signing, and anything added later) gets a usable key rather
+        than each having to remember.
+
+        Tolerates all three shapes seen in practice: escaped one-liner,
+        a value wrapped in quotes, and an already-real multi-line PEM.
+        """
+        if not value:
+            return value
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if "\\n" in value:
+            value = value.replace("\\n", "\n")
+        return value.strip() + "\n"  # PEM parsers want a trailing newline
+
+    # Used to build the manifest's redirect_url/hook_attributes.url and the
+    # OAuth redirect_uri — must be a URL GitHub can redirect a browser back
+    # to (localhost is fine for the manifest/OAuth flows below; it is NOT
+    # reachable for the deferred webhook, which needs a public URL).
+    public_base_url: str = "http://localhost:8000"
+    client_base_url: str = "http://localhost:3000"
 
     # Storage
     repos_storage_path: str = "/tmp/yasml-repos"

@@ -154,3 +154,51 @@ export const connectRepo = (name: string, source_url: string) =>
     body: JSON.stringify({ name, source_type: "github", source_url }),
   });
 export const deleteRepo = (id: string) => api<void>(`/api/repos/${id}`, { method: "DELETE" });
+
+// ─── GitHub — sign in and per-workspace org/repo access ────────────────────
+// Two separate things sharing one GitHub App: signing in (an alternative to
+// email/password) and "Connect GitHub" (installing the app on an org/user
+// account to import private repos). See CLAUDE.md for why the install flow
+// is a POST-then-redirect instead of a plain <a href> — it needs an
+// authenticated call to bind the installation to the right workspace
+// before GitHub is ever involved, and a token can't safely ride in a URL
+// that's about to redirect to a third party.
+
+/** A plain top-level navigation target — no auth needed to start signing in. */
+export const githubLoginUrl = () => `${BASE}/api/auth/github/login`;
+
+export type GitHubInstallation = {
+  id: string;
+  installation_id: number;
+  account_login: string;
+  account_type: string;
+  created_at: string;
+};
+
+export const listGithubInstallations = () => api<GitHubInstallation[]>("/api/integrations/github");
+
+/** Authenticated call that returns a URL to navigate to (window.location.href = ...),
+ * not a link the user clicks directly. */
+export const startGithubInstall = () =>
+  api<{ url: string }>("/api/integrations/github/connect", { method: "POST" });
+
+export type GithubRepoOption = {
+  id: number;
+  full_name: string;
+  private: boolean;
+  clone_url: string;
+  already_imported: boolean;
+};
+
+export const listInstallationRepos = (installationId: number) =>
+  api<{ installation: GitHubInstallation; repos: GithubRepoOption[] }>(
+    `/api/integrations/github/${installationId}/repos`
+  );
+
+export const importGithubRepos = (installationId: number, repos: GithubRepoOption[]) =>
+  api<Repo[]>(`/api/integrations/github/${installationId}/repos/import`, {
+    method: "POST",
+    body: JSON.stringify({
+      repos: repos.map((r) => ({ id: r.id, full_name: r.full_name, clone_url: r.clone_url })),
+    }),
+  });
