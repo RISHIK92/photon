@@ -40,7 +40,7 @@ before calling any account-scoped tool):
 {context_block}
 Question: {question}
 {screen_context_block}
-
+{first_round_nudge}
 Decide which tools to call next to gather evidence for this question. Call ONLY the tools \
 you actually need — most questions need exactly 1, occasionally 2. Do not call a tool "just \
 in case" or to be thorough; each call costs real time and money, and irrelevant evidence \
@@ -130,9 +130,24 @@ def _format_evidence(evidence: list[dict]) -> str:
     return "\n".join(f"[{e['id']}] ({e['source_type']}) {e['locator']}: {e['snippet']}" for e in evidence)
 
 
-def build_plan_prompt(question: str, context: str, screen_context: str | None) -> str:
+def build_plan_prompt(question: str, context: str, screen_context: str | None, is_first_round: bool = True) -> str:
     screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
     context_block = f"{context}\n" if context else ""
+    # Measured directly: at temperature=0.0 this planner (deepseek-v4-flash)
+    # returns an empty "calls": [] on the first round ~60% of the time even
+    # for clearly-answerable questions — raising temperature made it WORSE
+    # (5/5 empty at 0.3 vs 3/5 at 0.0 in the same test), so this isn't a
+    # sampling problem, it's the prompt not being directive enough on round
+    # 1. This line alone took empty-plan rate to 0/5 in testing. Only shown
+    # on the first round — round 2 legitimately returns empty to end the
+    # loop once enough evidence exists, and this line would fight that.
+    nudge = (
+        "This is your first chance to gather evidence — you have nothing yet. Call at least "
+        "one tool now unless the question is truly unanswerable by any tool (e.g. pure small "
+        "talk with no product/account/code angle at all).\n"
+        if is_first_round
+        else ""
+    )
     return _PLAN_PROMPT.format(
         system_rules=SYSTEM_RULES,
         tool_schemas=_format_schemas(),
@@ -140,6 +155,7 @@ def build_plan_prompt(question: str, context: str, screen_context: str | None) -
         context_block=context_block,
         question=question,
         screen_context_block=screen_block,
+        first_round_nudge=nudge,
     )
 
 

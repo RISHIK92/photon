@@ -111,26 +111,21 @@ async def answer_question(
         if remaining <= 0:
             break
 
-        plan_prompt = build_plan_prompt(question, context_log, screen_context)
+        plan_prompt = build_plan_prompt(question, context_log, screen_context, is_first_round=(round_num == 0))
         raw_plan = await generate(plan_prompt, max_output_tokens=800, temperature=0.0, json_mode=True)
         plan = extract_json(raw_plan) or {}
         calls = (plan.get("calls") or [])[: min(MAX_CALLS_PER_ROUND, remaining)]
 
         if not calls and round_num == 0:
-            # The planner sometimes returns an empty plan on the very first
-            # round even for clearly-answerable questions (observed with
-            # deepseek-v4-flash-0731 via OpenRouter) — before any evidence
-            # exists that's almost always premature, not a real "nothing
-            # could help" verdict. One retry with a firmer nudge rather than
-            # abstaining on round zero.
+            # Should be rare now that the first-round prompt is directive
+            # about calling something (see build_plan_prompt's nudge) — this
+            # is a safety net for the cases that still slip through, not the
+            # primary fix anymore. Retry once at a nonzero temperature purely
+            # to escape a repeated deterministic empty output, not because
+            # temperature fixes emptiness on its own (measured: it doesn't —
+            # see build_plan_prompt's comment).
             log.warning("agent.empty_first_round_plan_retrying", question=question)
-            raw_plan = await generate(
-                plan_prompt + "\n\nYou returned zero tool calls. Before abstaining, call at least one "
-                "tool this round unless truly nothing here could help.",
-                max_output_tokens=800,
-                temperature=0.2,
-                json_mode=True,
-            )
+            raw_plan = await generate(plan_prompt, max_output_tokens=800, temperature=0.4, json_mode=True)
             plan = extract_json(raw_plan) or {}
             calls = (plan.get("calls") or [])[: min(MAX_CALLS_PER_ROUND, remaining)]
 

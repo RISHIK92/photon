@@ -7,6 +7,8 @@ import { AgentAnswer } from "@/lib/evidence";
 import EvidencePanel from "./EvidencePanel";
 import AccountSummary from "./AccountSummary";
 import CaptionsBridge from "./CaptionsBridge";
+import CaptionsPanel from "./CaptionsPanel";
+import { mergeCaption, type Caption } from "@/lib/captions";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
@@ -19,7 +21,7 @@ export default function CallPage() {
   const [state, setState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
-  const [captions, setCaptions] = useState<string[]>([]);
+  const [captions, setCaptions] = useState<Caption[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [textInput, setTextInput] = useState("");
   const [textBusy, setTextBusy] = useState(false);
@@ -50,8 +52,8 @@ export default function CallPage() {
     setTokenData(null);
   }, []);
 
-  const onCaption = useCallback((text: string) => {
-    setCaptions((prev) => [...prev.slice(-8), text]);
+  const onCaption = useCallback((caption: Caption) => {
+    setCaptions((prev) => mergeCaption(prev, caption));
   }, []);
 
   const askByText = useCallback(async () => {
@@ -145,15 +147,7 @@ export default function CallPage() {
               </div>
 
               <div className="shrink-0">
-                <h2 className="text-xs uppercase tracking-wide text-neutral-500 mb-1">
-                  Live captions
-                </h2>
-                <div className="bg-neutral-900 border border-neutral-800 rounded p-2 h-20 overflow-y-auto text-xs space-y-1">
-                  {captions.length === 0 && <p className="text-neutral-600">…</p>}
-                  {captions.map((c, i) => (
-                    <p key={i}>{c}</p>
-                  ))}
-                </div>
+                <CaptionsPanel captions={captions} />
               </div>
             </>
           )}

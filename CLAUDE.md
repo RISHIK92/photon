@@ -109,6 +109,51 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Change — captions split by speaker (caller vs Photon)
+
+The user asked for the live captions to visibly separate the human from
+the agent. Previously `CaptionsBridge.tsx` threw the attribution away —
+its handler took only `segments` and pushed bare strings, so a human
+question and Photon's spoken answer rendered as identical grey lines in
+one undifferentiated list, and interim segments appended as duplicate
+half-sentences (the old code sliced to the last 8 with no dedup by id).
+
+- `client/lib/captions.ts` (new) — the `Caption` type (id, speaker,
+  display name, isLocal, text, final, at) and `mergeCaption()`, which
+  **upserts by LiveKit's segment id** rather than appending. Interim
+  results arrive repeatedly under the same id with growing text and
+  `final: false`, then once more `final: true` — appending blindly is
+  what made one sentence render as a dozen fragments.
+- `client/app/call/CaptionsBridge.tsx` — the `transcriptionReceived`
+  handler now takes its second arg (`participant?: Participant`) and
+  resolves who spoke: agent if `participant.kind === ParticipantKind.AGENT`
+  (value 4 in `@livekit/protocol`'s `ParticipantInfo_Kind`), if the
+  identity starts with `agent-`, **or if participant is undefined** —
+  the agent's own TTS transcript arrives with no participant attached,
+  so an undefined participant means the agent, not an unknown human.
+  Local participant is labelled "You", other humans by name/identity,
+  the agent as "Photon".
+- `client/app/call/CaptionsPanel.tsx` (new) — chat-style transcript:
+  caller left-aligned in slate with their initial as an avatar, Photon
+  right-aligned in indigo with a "P" avatar, each bubble carrying a name
+  label; non-final segments render dimmed/italic with a pulsing caret so
+  it's visible which line is still being transcribed. Colour legend in
+  the header, autoscrolls to the newest line.
+- `client/app/call/page.tsx` — captions state is now `Caption[]` merged
+  via `mergeCaption`; renders `<CaptionsPanel>` instead of the inline
+  20px-tall grey `<p>` list.
+
+**Verified**: `npx tsc --noEmit` clean, and live in a real browser —
+joined the `photon` room, the worker joined and spoke its announcement,
+which rendered correctly as a right-aligned indigo "Photon" bubble. The
+caller-side (left, slate) rendering was **not** confirmed against real
+STT: the user stopped the live test to run their own, and the synthetic-
+speech harness kept losing the race with LiveKit's `RoomIO`, which binds
+STT to the *first* remote participant that joins — with the browser
+joining first, the fake caller's audio was never transcribed at all.
+Worth knowing independently of this change: **whoever joins the room
+first is the only person the agent listens to.**
+
 ### Feature — screen-share vision, actually wired up (was a stub since Phase 4)
 
 The user asked to build this. It was previously a deliberate stub —
