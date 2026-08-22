@@ -135,9 +135,20 @@ class LiveKitAdapter:
             log.warning("livekit_adapter.pillow_missing_skipping_frames")
             return
 
-        stream = rtc.VideoStream.from_track(track, format=rtc.VideoBufferType.RGBA)
+        # NOTE the keyword: from_track() is keyword-ONLY in livekit rtc.
+        # Passing the track positionally raises TypeError — and because
+        # this used to sit outside the try/except below, inside a task
+        # nobody awaits, that exception vanished completely: the
+        # screen_share_subscribed log line appeared, zero frames arrived,
+        # and no error was ever printed. Caught only by testing the real
+        # signature. Everything from here down is inside the try for that
+        # reason: a pump that dies must say so.
         last_sent = 0.0
+        stream = None
         try:
+            stream = rtc.VideoStream.from_track(track=track, format=rtc.VideoBufferType.RGBA)
+            log.info("livekit_adapter.screen_pump_started")
+            frames_seen = 0
             async for event in stream:
                 frame = event.frame
                 interval = (
@@ -155,10 +166,17 @@ class LiveKitAdapter:
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=70)
                 await self._callbacks.on_frame(buf.getvalue(), "screen")
+                frames_seen += 1
+                if frames_seen == 1 or frames_seen % 30 == 0:
+                    # Silence used to be indistinguishable from "working
+                    # fine, nobody asked a visual question yet".
+                    log.info("livekit_adapter.screen_frames_flowing", frames=frames_seen,
+                             size_bytes=len(buf.getvalue()))
         except Exception as exc:  # noqa: BLE001 - a frame-pump failure must not take the call down
-            log.error("livekit_adapter.screen_pump_error", error=str(exc))
+            log.error("livekit_adapter.screen_pump_error", error=type(exc).__name__ + ": " + str(exc))
         finally:
-            await stream.aclose()
+            if stream is not None:
+                await stream.aclose()
 
     # ── TransportAdapter ─────────────────────────────────────────────────
 

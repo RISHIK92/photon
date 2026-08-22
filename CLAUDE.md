@@ -109,6 +109,54 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — screen share was silently dead: `from_track()` is keyword-only
+
+Found while the user live-tested screen share. They shared their screen and
+asked "You please check that and help me open the search bar?" and got
+"I don't have screen-sharing capabilities or visibility into your display."
+
+The log said the track WAS subscribed
+(`livekit_adapter.screen_share_subscribed participant=rishik`), the
+utterance DID match `VISUAL_HINT_RE` ("help me open"), the small-talk gate
+passed it through, Pillow was installed, and **no error appeared
+anywhere** — worker log or server log.
+
+**Root cause**: `rtc.VideoStream.from_track()` is **keyword-only**
+(`(*, track, loop=None, format=None, capacity=0)`). The adapter called it
+positionally, so it raised `TypeError` immediately — and that line sat
+*outside* the pump's `try/except`, inside a task created with
+`asyncio.create_task()` that nothing ever awaits. The exception was
+therefore swallowed whole. Perfect silence: subscription logged, zero
+frames, no traceback. This has been broken since Phase 4; the feature was
+only ever tested by posting a frame straight to the brain-api, never
+through a live LiveKit screen-share track, which is exactly the seam that
+was wrong.
+
+**Fixes:**
+- `from_track(track=track, format=...)` — keyword.
+- The stream is now created INSIDE the try, so any future failure is
+  logged as `screen_pump_error` (with the exception type) instead of
+  disappearing.
+- New `screen_pump_started` and `screen_frames_flowing` (first frame, then
+  every 30th) log lines. Silence used to be indistinguishable from
+  "working fine, nobody asked a visual question yet."
+
+**Regression guard** — `call-agent/tests/test_adapter_api.py`, static
+checks that need no LiveKit room: the SDK signature really is keyword-only,
+the adapter passes `track=`/`format=` as keywords with zero positional
+args, and `from_track()` is lexically inside the pump's `try` block. 70
+tests pass in that suite.
+
+**A hypothesis the experiment killed**: the first suspicion was that
+`AgentSession`'s RoomIO (`RoomInputOptions(video_enabled=True)`) was
+consuming the track and starving our second `VideoStream`. Tested it
+directly — published a real screenshare track into a scratch room,
+subscribed, attached two `VideoStream`s to the same track: **both received
+12 frames in 4s**. So two consumers are fine and `video_enabled` was left
+alone. Worth recording, because "two readers on one track" is a plausible-
+sounding explanation that would have sent the next person down the wrong
+path.
+
 ### Fix — the agent was reading citation ids out loud
 
 Caught by the user in a live call. The composed answer carries inline
