@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { GITHUB_STATE_LABEL, getGithubStatus, type GithubStatus } from "@/lib/api";
 import { INTEGRATIONS, SCOPE_LABEL, type Integration } from "@/lib/integrations";
 
 /** What the agent can draw on, and what it will be able to.
@@ -25,6 +27,14 @@ export default function SourcesGrid({
   onConnectGithub: () => void;
   onConnectSource: (key: string) => void;
 }) {
+  // GitHub's label comes from the shared status rather than a local count,
+  // so the card, the dialog and the call setup screen all say the same
+  // thing about whether it is connected.
+  const [github, setGithub] = useState<GithubStatus | null>(null);
+  useEffect(() => {
+    getGithubStatus().then(setGithub).catch(() => setGithub(null));
+  }, [githubConnected]);
+
   const live = INTEGRATIONS.filter((i) => i.status === "live");
   const soon = INTEGRATIONS.filter((i) => i.status === "coming_soon");
   const connectable = (key: string) =>

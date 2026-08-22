@@ -6,6 +6,7 @@ import {
   type CallOptions,
   type CallSource,
 } from "@/lib/api";
+import Toggle from "../_ui/Toggle";
 
 /** Chosen before joining: what the agent is for, which language, and which
  * sources it may use.
@@ -215,12 +216,11 @@ function SourceRow({
         enabled && source.available ? "border-[rgba(180,83,9,.4)] bg-[rgba(180,83,9,.06)]" : "border-[color:var(--l-rule)]"
       }`}
     >
-      <input
-        type="checkbox"
+      <Toggle
+        label={source.label}
         checked={enabled && source.available}
         disabled={!source.available}
         onChange={onToggle}
-        className="shrink-0"
       />
       <span className="text-sm text-[color:var(--l-ink)] flex-1">
         {source.label}

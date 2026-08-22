@@ -374,3 +374,26 @@ export const decideKnock = (slug: string, knockId: string, admit: boolean) =>
     method: "POST",
     body: JSON.stringify({ admit }),
   });
+
+
+// ── GitHub, as one state ─────────────────────────────────────────────────
+// GitHub is two things that were previously surfaced separately: an
+// IDENTITY (this account is @someone, per user) and ACCESS (the app is
+// installed, per workspace, which is what can read code). Every surface
+// reads this one shape so they cannot disagree about whether it is
+// "connected".
+export type GithubStatus = {
+  identity: { linked: boolean; login: string | null };
+  access: { installations: { id: number; account: string; type: string }[]; repos_indexed: number };
+  state: "not_connected" | "identity_only" | "installed_no_repos" | "ready";
+  app_configured: boolean;
+};
+
+export const getGithubStatus = () => api<GithubStatus>("/api/integrations/github/status");
+
+export const GITHUB_STATE_LABEL: Record<GithubStatus["state"], string> = {
+  not_connected: "connect",
+  identity_only: "signed in — needs access",
+  installed_no_repos: "connected — pick repos",
+  ready: "connected",
+};

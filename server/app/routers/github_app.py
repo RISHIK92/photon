@@ -28,7 +28,7 @@ from app.config import get_settings
 from app.core.auth import get_current_user
 from app.core.workspace import get_current_workspace, require_role
 from app.database import get_session
-from app.models import WorkspaceRole, GitHubInstallation, GitHubInstallationRead, Job, Repo, RepoSourceType, User, Workspace
+from app.models import Repo, RepoStatus, WorkspaceRole, GitHubInstallation, GitHubInstallationRead, Job, Repo, RepoSourceType, User, Workspace
 from app.services.github_app_auth import generate_app_jwt, get_installation_token_async
 from app.tasks.ingestion import run_ingestion
 
@@ -98,6 +98,58 @@ async def app_info(current_user: User = Depends(get_current_user)):
         "installations_count": data.get("installations_count", 0),
         "org_install_supported": owner_type == "Organization",
         "settings_url": f"https://github.com/settings/apps/{data.get('slug')}",
+    }
+
+
+@router.get("/status")
+async def github_status(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
+):
+    """One place that answers "is GitHub connected?".
+
+    GitHub is genuinely two things — an IDENTITY (this account is
+    @someone) and ACCESS (the app is installed on an account or org, which
+    is what can read code). They were exposed separately, so the console
+    showed "connect" beside a GitHub already signed in with, and a user who
+    had done half the flow could not tell which half.
+
+    Identity is per USER and survives switching workspace; access is per
+    WORKSPACE, because that is where the repos land. This returns both, so
+    every surface can render the same state instead of each deciding.
+    """
+    result = await session.execute(
+        select(GitHubInstallation).where(GitHubInstallation.workspace_id == workspace.id)
+    )
+    installations = result.scalars().all()
+
+    ready_repos = (await session.execute(
+        select(Repo).where(Repo.workspace_id == workspace.id, Repo.status == RepoStatus.READY)
+    )).scalars().all()
+
+    identity_linked = bool(current_user.github_id)
+    return {
+        "identity": {
+            "linked": identity_linked,
+            "login": current_user.github_login,
+        },
+        "access": {
+            "installations": [
+                {"id": i.installation_id, "account": i.account_login, "type": i.account_type}
+                for i in installations
+            ],
+            "repos_indexed": len(ready_repos),
+        },
+        # What the UI should offer next, decided here rather than in three
+        # places that could disagree.
+        "state": (
+            "ready" if ready_repos
+            else "installed_no_repos" if installations
+            else "identity_only" if identity_linked
+            else "not_connected"
+        ),
+        "app_configured": bool(settings.github_app_slug and settings.github_app_private_key),
     }
 
 

@@ -82,14 +82,19 @@ export default function ConnectSourceModal({
 
   const label = sourceKey.replace(/_/g, " ");
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <div className="l-tokens l-scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-6">
       <div className="l-sheet my-8 w-full max-w-lg p-6">
         <div className="flex items-start justify-between mb-3">
           <h2 className="text-[17px] capitalize">Connect {label}</h2>
-          <button onClick={onClose} className="text-[12px] uppercase tracking-[0.14em] l-quiet">
-            close
-          </button>
         </div>
 
         {sourceKey === "slack" && (

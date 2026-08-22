@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Toggle from "../_ui/Toggle";
 import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
 import ConnectGithubDialog from "./ConnectGithubDialog";
@@ -179,6 +180,17 @@ function Dashboard() {
   // GitHub redirects back here after an installation with ?installation=connected
   // but no installation_id — the app may have multiple installations, so we
   // just open the picker for the most recently created one.
+  // The picker used to carry a Close button. Escape replaces it — an inline
+  // panel with no way out would otherwise sit there until a reload.
+  useEffect(() => {
+    if (ghInstallationId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setGhInstallationId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ghInstallationId]);
+
   useEffect(() => {
     if (searchParams.get("installation") !== "connected") return;
     router.replace("/dashboard");
@@ -531,14 +543,9 @@ function Dashboard() {
         {/* the repo picker, once GitHub has been installed */}
         {ghInstallationId !== null && (
           <section className="l-sheet mt-10 p-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[16px]" style={{ color: "var(--l-ink)" }}>
-                Choose repositories to import
-              </h3>
-              <button onClick={() => setGhInstallationId(null)} className="text-[12px] uppercase l-quiet">
-                Close
-              </button>
-            </div>
+            <h3 className="text-[16px]" style={{ color: "var(--l-ink)" }}>
+              Choose repositories to import
+            </h3>
 
             {ghBusy && ghRepos.length === 0 ? (
               <p className="mt-4 text-[14px] l-t-muted">Loading repositories…</p>
@@ -566,38 +573,36 @@ function Dashboard() {
 
                 <ul className="mt-4 max-h-72 overflow-y-auto pr-2">
                   {ghRepos.map((r) => (
-                    <li key={r.id}>
-                      <label
-                        className="flex cursor-pointer items-center gap-3 border-b py-3 text-[14px]"
-                        style={{ borderColor: "var(--l-rule)" }}
+                    <li
+                      key={r.id}
+                      className="flex items-center gap-3 border-b py-3 text-[14px]"
+                      style={{ borderColor: "var(--l-rule)" }}
+                    >
+                      <Toggle
+                        label={`Import ${r.full_name}`}
+                        checked={r.already_imported || ghSelected.has(r.id)}
+                        disabled={r.already_imported}
+                        onChange={() => toggleGhRepo(r.id)}
+                      />
+                      <span
+                        className="truncate"
+                        style={{ color: r.already_imported ? "var(--l-muted)" : "var(--l-ink)" }}
                       >
-                        <input
-                          type="checkbox"
-                          disabled={r.already_imported}
-                          checked={r.already_imported || ghSelected.has(r.id)}
-                          onChange={() => toggleGhRepo(r.id)}
-                          className="accent-[color:var(--l-rust)]"
-                        />
+                        {r.full_name}
+                      </span>
+                      {r.private && (
                         <span
-                          className="truncate"
-                          style={{ color: r.already_imported ? "var(--l-muted)" : "var(--l-ink)" }}
+                          className="rounded-full px-2 py-0.5 text-[10px] tracking-[0.14em] uppercase l-t-muted"
+                          style={{ border: "1px solid var(--l-rule)" }}
                         >
-                          {r.full_name}
+                          private
                         </span>
-                        {r.private && (
-                          <span
-                            className="rounded-full px-2 py-0.5 text-[10px] tracking-[0.14em] uppercase l-t-muted"
-                            style={{ border: "1px solid var(--l-rule)" }}
-                          >
-                            private
-                          </span>
-                        )}
-                        {r.already_imported && (
-                          <span className="ml-auto text-[10px] tracking-[0.16em] uppercase l-t-rust">
-                            imported
-                          </span>
-                        )}
-                      </label>
+                      )}
+                      {r.already_imported && (
+                        <span className="ml-auto text-[10px] tracking-[0.16em] uppercase l-t-rust">
+                          imported
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

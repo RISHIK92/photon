@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getGithubAppInfo, type GithubAppInfo } from "@/lib/api";
+import { getGithubAppInfo, getGithubStatus, type GithubAppInfo, type GithubStatus } from "@/lib/api";
 
 /** Shown BEFORE handing the user off to GitHub.
  *
@@ -27,6 +27,7 @@ export default function ConnectGithubDialog({
   busy: boolean;
 }) {
   const [info, setInfo] = useState<GithubAppInfo | null>(null);
+  const [status, setStatus] = useState<GithubStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
 
@@ -34,9 +35,20 @@ export default function ConnectGithubDialog({
     getGithubAppInfo()
       .then(setInfo)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    // Where the user already is in the flow, so the dialog can tell them
+    // the ONE next step instead of restating all of it every time.
+    getGithubStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
 
   const blockedForOrgs = info ? !info.org_install_supported : false;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
 
   return (
     <div className="l-tokens l-scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-6">
@@ -48,9 +60,6 @@ export default function ConnectGithubDialog({
               Here&apos;s what happens, before you leave for GitHub.
             </p>
           </div>
-          <button onClick={onCancel} className="text-[12px] uppercase tracking-[0.14em] l-quiet">
-            close
-          </button>
         </div>
 
         {error && <p className="text-[13px] l-t-rust mb-4">{error}</p>}
@@ -94,6 +103,25 @@ export default function ConnectGithubDialog({
                 <p className="l-t-muted mt-2 text-xs">
                   Installing on your personal account works right now without any of this.
                 </p>
+              </div>
+            )}
+
+            {status && status.state !== "not_connected" && (
+              <div className="border border-emerald-700/50 bg-emerald-500/5 rounded p-3 mb-4 text-sm">
+                <p className="text-emerald-300">
+                  {status.state === "ready"
+                    ? `Already connected — ${status.access.repos_indexed} repo${status.access.repos_indexed === 1 ? "" : "s"} indexed.`
+                    : status.state === "installed_no_repos"
+                      ? "The app is installed. Nothing is indexed yet — pick repositories below."
+                      : `Signed in as @${status.identity.login} — the app still needs to be installed to read code.`}
+                </p>
+                {status.access.installations.length > 0 && (
+                  <p className="text-neutral-400 mt-1">
+                    Installed on{" "}
+                    {status.access.installations.map((i) => `@${i.account}`).join(", ")}. Adding
+                    another account or org is fine — they stack.
+                  </p>
+                )}
               </div>
             )}
 
