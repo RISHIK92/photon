@@ -33,7 +33,7 @@ _REPO_ID_TOOLS = {t["name"] for t in TOOL_SCHEMAS if "repo_id" in t["parameters"
 # deliberately absent from the schema the planner sees: it is not a choice
 # the model should be able to make, and a hallucinated workspace id would be
 # a cross-tenant read rather than a merely wrong answer.
-_WORKSPACE_ID_TOOLS = {"search_slack", "search_jira"}
+_WORKSPACE_ID_TOOLS = {"search_slack", "search_jira", "search_linear", "search_notion", "search_datadog"}
 # The only tools that can fall back to searching every repo in a workspace
 # at once (plain vector search, filterable by workspace_id) rather than
 # needing one specific repo (a Neo4j graph walk, a per-repo provenance

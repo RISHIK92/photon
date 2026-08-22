@@ -262,6 +262,64 @@ class JiraConnectionRead(SQLModel):
     last_synced_at: Optional[datetime]
 
 
+# ─── Generic external connectors (Linear, Notion, Datadog, …) ─────────────
+# Slack and Jira each got their own table because each has real structure
+# worth modelling (channels with history; projects with issues). Everything
+# after them shares one shape — credentials, a set of selectable resources,
+# a sync cursor — so it gets one table and a per-provider adapter instead of
+# a new table, router and migration per vendor.
+
+
+class ConnectorProvider(str, Enum):
+    LINEAR = "linear"
+    NOTION = "notion"
+    DATADOG = "datadog"
+
+
+class ExternalConnection(SQLModel, table=True):
+    __tablename__ = "external_connections"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    provider: ConnectorProvider
+    scope: ConnectionScope = ConnectionScope.WORKSPACE
+    owner_user_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    display_name: Optional[str] = None
+    # Fernet-encrypted JSON: every provider needs a different set of secrets
+    # (one key, two keys, a token plus a site), and a column per vendor
+    # secret would be a migration per vendor.
+    credentials_encrypted: str = ""
+    # Non-secret settings (Datadog site, Notion page filters). Plain JSON so
+    # it is inspectable without decrypting anything.
+    config: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    connected_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_synced_at: Optional[datetime] = None
+
+
+class ConnectorResource(SQLModel, table=True):
+    """A selectable unit inside a connection — a Linear team, a Notion
+    database, a Datadog monitor tag. Selection is explicit for every
+    provider, same as Slack channels and Jira projects."""
+    __tablename__ = "connector_resources"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    connection_id: str = Field(sa_column=Column(String, ForeignKey("external_connections.id", ondelete="CASCADE"), nullable=False, index=True))
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    resource_id: str
+    name: str
+    selected: bool = True
+    item_count: int = 0
+    last_synced_at: Optional[datetime] = None
+
+
+class ExternalConnectionRead(SQLModel):
+    id: str
+    provider: ConnectorProvider
+    scope: ConnectionScope
+    display_name: Optional[str]
+    created_at: datetime
+    last_synced_at: Optional[datetime]
+
+
 # ─── Meetings ─────────────────────────────────────────────────────────────
 
 

@@ -149,6 +149,60 @@ derives access from the App's PERMISSIONS, not from OAuth scopes, so
 `scope=user:email` in the authorize URL buys nothing and the call fails
 for any user with a private email — which is the GitHub default.
 
+## Linear, Notion, Datadog — one generic connector instead of three more
+
+Slack and Jira each earned a bespoke table and router: each has real
+structure worth modelling (channels with history; projects with issues).
+These three share one shape — credentials in, resources listed, resources
+selected, sync queued — so they share ONE table
+(`external_connections` + `connector_resources`), ONE router and ONE Celery
+task. **A new provider is a module in `app/services/connectors/`, not
+another table, router and migration.**
+
+- Credentials live in a single Fernet-encrypted JSON blob: every provider
+  needs a different set of secrets (one key, two keys, a token plus a
+  site), and a column per vendor secret is a migration per vendor.
+- Non-secret settings (Datadog's site) sit in a plain `config` JSON so they
+  are inspectable without decrypting anything.
+- `GET /providers` publishes what each one asks for, so the UI renders the
+  right form and the API rejects a half-filled one *before* calling the
+  vendor.
+- One Qdrant collection filtered by `workspace_id` AND `provider` inside
+  the query — a collection per vendor per tenant multiplies without bound
+  for no retrieval benefit.
+
+**Per-provider decisions that are not obvious:**
+- **Linear** — personal API key, GraphQL. Comments are indexed with the
+  issue: "we decided not to fix this because…" lives in a comment and
+  nowhere else.
+- **Notion** — internal integration token. Its permission model is the
+  trap: an integration sees NOTHING until a page is explicitly shared with
+  it, so "connected but empty" is the normal first state. The resources
+  endpoint returns an explicit note saying so, because otherwise it reads
+  as a broken integration when it is working exactly as Notion intends.
+  Block flattening is depth-limited — pages nest arbitrarily and a runaway
+  recursion would issue thousands of calls for text nobody reads.
+- **Datadog** — API key + application key + SITE. Datadog is
+  region-partitioned and the wrong host 403s, which looks exactly like a
+  bad key, so site is part of the config rather than a guess. Indexes
+  monitors and incidents, NOT metrics or raw logs: "is something on fire
+  right now, and is it this?" is answerable from a monitor's name, message
+  and state; time-series do not embed usefully and raw logs are expensive
+  noise. A 403 on incidents is swallowed — Incident Management is a
+  separate product and not having it is normal, not a sync failure.
+
+`search_linear` / `search_notion` / `search_datadog` have **no seed
+fallback** (same reasoning as `search_jira`): with no fixture equivalent, a
+fallback would make a broken connection indistinguishable from a working
+one. 17 tools registered now; eval held at 13-15/16, the two flags being
+the known S2 tool-count threshold and the S3 empty-plan flake, not a new
+regression from the larger tool list.
+
+**Verified live**: `/providers` reports each form, a half-filled Datadog
+form is rejected with 422 before any vendor call, a bad Linear key is
+rejected with a real 400 from Linear's own API, and all three tools return
+a clear "not connected" rather than fixture data.
+
 ## Jira — connected by API token, not OAuth
 
 Same wall as Slack's public distribution: Atlassian's OAuth 3LO needs a

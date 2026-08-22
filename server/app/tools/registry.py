@@ -9,7 +9,15 @@ from typing import Any, Awaitable, Callable
 
 from app.tools.code import find_usages, read_file, search_code, trace_symbol
 from app.tools.conflict import check_conflict
-from app.tools.knowledge import search_docs, search_jira, search_slack, search_tickets
+from app.tools.knowledge import (
+    search_datadog,
+    search_docs,
+    search_jira,
+    search_linear,
+    search_notion,
+    search_slack,
+    search_tickets,
+)
 from app.tools.provenance import explain_why
 from app.tools.tenant import get_account_logs_tool, get_account_tool, get_incidents_tool, list_accounts_tool
 
@@ -82,6 +90,34 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "search_linear",
+        "description": (
+            "Search connected Linear issues — status of a fix, which cycle it lands in, and the "
+            "discussion on it. Returns nothing if Linear isn't connected."
+        ),
+        "parameters": {"query": {"type": "string", "required": True},
+                        "top_k": {"type": "integer", "required": False, "default": 8}},
+    },
+    {
+        "name": "search_notion",
+        "description": (
+            "Search connected Notion pages — runbooks, internal docs and decisions kept outside "
+            "the repo. Returns nothing if Notion isn't connected."
+        ),
+        "parameters": {"query": {"type": "string", "required": True},
+                        "top_k": {"type": "integer", "required": False, "default": 8}},
+    },
+    {
+        "name": "search_datadog",
+        "description": (
+            "Search connected Datadog monitors and incidents — whether something is alerting or "
+            "on fire RIGHT NOW that explains what the customer is seeing. Returns nothing if "
+            "Datadog isn't connected."
+        ),
+        "parameters": {"query": {"type": "string", "required": True},
+                        "top_k": {"type": "integer", "required": False, "default": 8}},
+    },
+    {
         "name": "search_slack",
         "description": "Semantic search over internal Slack history, optionally scoped to one channel.",
         "parameters": {
@@ -151,6 +187,9 @@ _DISPATCH: dict[str, ToolFn] = {
     "search_tickets": search_tickets,
     "search_slack": search_slack,
     "search_jira": search_jira,
+    "search_linear": search_linear,
+    "search_notion": search_notion,
+    "search_datadog": search_datadog,
     "get_account": get_account_tool,
     "list_accounts": list_accounts_tool,
     "get_account_logs": get_account_logs_tool,

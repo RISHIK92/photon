@@ -157,3 +157,50 @@ async def search_jira(
     return tool_result(
         "search_jira", evidence, note=None if evidence else f"no Jira issues matched '{query}'"
     )
+
+
+async def _search_connector(provider: str, tool_name: str, query: str, top_k: int, workspace_id: str | None) -> dict:
+    """Shared body for the connector-backed tools.
+
+    Like search_jira and unlike search_slack, there is NO seed fallback:
+    these sources have no fixture equivalent, so returning demo data under a
+    Linear or Datadog label would make a broken connection indistinguishable
+    from a working one.
+    """
+    if not workspace_id:
+        return tool_result(tool_name, [], note=f"no {provider} connection for this workspace")
+    try:
+        from app.services.connectors import base as connector_base
+
+        loop = asyncio.get_event_loop()
+        if not await loop.run_in_executor(None, connector_base.has_data, workspace_id, provider):
+            return tool_result(tool_name, [], note=f"no {provider} data indexed for this workspace yet")
+        hits = await loop.run_in_executor(
+            None, lambda: connector_base.search(workspace_id, provider, query, top_k)
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("tool.connector_search_error", provider=provider, error=str(exc))
+        return tool_error(tool_name, f"{tool_name} failed: {exc}")
+
+    evidence = [
+        make_evidence(
+            "ticket" if provider in ("linear",) else ("incident" if provider == "datadog" else "docs"),
+            f"{provider}:{h.get('external_id')}",
+            f"{h.get('title', '')} — {h.get('text', '')[:600]}",
+            float(h.get("score") or 0.0),
+        )
+        for h in hits
+    ]
+    return tool_result(tool_name, evidence, note=None if evidence else f"nothing in {provider} matched '{query}'")
+
+
+async def search_linear(query: str, top_k: int = 8, workspace_id: str | None = None) -> dict:
+    return await _search_connector("linear", "search_linear", query, top_k, workspace_id)
+
+
+async def search_notion(query: str, top_k: int = 8, workspace_id: str | None = None) -> dict:
+    return await _search_connector("notion", "search_notion", query, top_k, workspace_id)
+
+
+async def search_datadog(query: str, top_k: int = 8, workspace_id: str | None = None) -> dict:
+    return await _search_connector("datadog", "search_datadog", query, top_k, workspace_id)
