@@ -68,7 +68,18 @@ class Settings(BaseSettings):
     # model; do not swap it without re-running the same measurement (the
     # bench lives in git history / CLAUDE.md).
     openrouter_chat_model: str = "google/gemini-3.5-flash-lite"
-    openrouter_vision_model: str = "google/gemini-3.7-flash"
+    # Measured on a real screen frame with known text (the bench scores
+    # whether the description still READS the screen, not just speed):
+    # gemini-3.7-flash 3.55-3.78s, gemini-3.1-flash-lite 1.27-1.57s,
+    # gemini-3.5-flash-lite 1.03-1.96s — all 3/3 on the strings that had to
+    # survive. Same model as the text path now, ~3.4x faster than before.
+    #
+    # Also measured, and deliberately NOT changed: shrinking the frame does
+    # not help (768px was no faster; 512px was no faster AND dropped an
+    # on-screen string), and a terser prompt with a 120-token cap was no
+    # faster than the careful 300-token one — so the frame stays at 1024px
+    # and the prompt keeps its "do not guess outside the frame" wording.
+    openrouter_vision_model: str = "google/gemini-3.5-flash-lite"
 
     # Voyage AI (embeddings)
     voyage_api_key: str = Field(default="", alias="VOYAGE_API_KEY")

@@ -28,6 +28,18 @@ settings = get_settings()
 
 _URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# One pooled client for every call instead of httpx.post()'s implicit
+# connect-per-call. Measured: the same vision call took ~1.1s on a warm
+# pooled connection in the bench but ~2.0s through the agent, and the
+# difference is a fresh TCP + TLS handshake to OpenRouter every single
+# time. A turn makes 2-3 of these calls, so the handshake was being paid
+# 2-3 times per question. httpx.Client is thread-safe for requests, which
+# matters because these run in a thread executor.
+_client = httpx.Client(
+    timeout=60.0,
+    limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=300.0),
+)
+
 
 def _headers() -> dict:
     return {
@@ -64,7 +76,7 @@ def sync_chat(prompt: str, max_tokens: int = 1500, temperature: float = 0.1, jso
     if json_mode:
         body["response_format"] = {"type": "json_object"}
 
-    response = httpx.post(_URL, headers=_headers(), json=body, timeout=60.0)
+    response = _client.post(_URL, headers=_headers(), json=body)
     response.raise_for_status()
     data = response.json()
     choices = data.get("choices") or []
@@ -100,7 +112,7 @@ def sync_chat_vision(prompt: str, image_bytes: bytes, max_tokens: int = 300, tem
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-    response = httpx.post(_URL, headers=_headers(), json=body, timeout=60.0)
+    response = _client.post(_URL, headers=_headers(), json=body)
     response.raise_for_status()
     data = response.json()
     choices = data.get("choices") or []

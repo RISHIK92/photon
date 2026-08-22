@@ -109,6 +109,59 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — vision call 4.0s -> 1.3s, and a per-call TLS handshake tax on everything
+
+The screen-share audit measured a visual turn at 7.4s, of which the vision
+call alone was 4.0s. Benchmarked the same way as the text model: a real
+frame with known strings drawn on it, **scored on whether the description
+still READ the screen**, not just on speed.
+
+| vision model | latency | read the screen? |
+|---|---|---|
+| `google/gemini-3.7-flash` (was) | 3.55s / 3.78s | 3/3 |
+| `google/gemini-3.1-flash-lite` | 1.27s / 1.57s | 3/3 |
+| **`google/gemini-3.5-flash-lite`** | **1.03s / 1.96s** | **3/3** |
+
+`openrouter_vision_model` is now `gemini-3.5-flash-lite` — the same model
+as the text path, so there is one model to reason about instead of two.
+
+**Two things measured and deliberately NOT changed**: shrinking the frame
+does not help (768px was no faster, and 512px was no faster AND dropped an
+on-screen string — legibility is the whole point of a screen frame), and a
+terser prompt capped at 120 output tokens was no faster than the careful
+300-token one, so the prompt keeps its "do not guess at anything outside
+the frame" wording. Both were plausible optimisations that the measurement
+killed.
+
+**Then a bigger find.** The same vision call took ~1.1s in the bench but
+~2.0s through the agent. The difference: `openrouter.py` used
+`httpx.post()`, which opens a **fresh TCP + TLS connection on every
+call** — and a turn makes 2-3 of them, so the handshake was being paid 2-3
+times per question, on the text path too. Replaced with one pooled
+module-level `httpx.Client` (thread-safe, which matters because these run
+in a thread executor; 300s keepalive).
+
+**Results — visual turn 7.36s -> 3.25s:**
+
+```
+before:  vision 3997ms  plan 1363ms  compose 1954ms  = 7356ms
+after:   vision 1257ms  plan 1034ms  compose  883ms  = 3250ms
+```
+
+**And the text path got faster for free**, mostly in the tail, because the
+handshake tax is gone: median 2375 -> **2065ms**, p90 2976 -> **2181ms**,
+max 3538 -> **2494ms**, and **12/12 under 3s** where it was 10/12 (the two
+stragglers were exactly this).
+
+**Accuracy re-checked after the change**, since a model swap is exactly
+the kind of thing that trades correctness for speed: `evals/agent_eval.py`
+base **24/24** (median 2013ms), HARD **15/16** (the same over-strict
+tool-count threshold as before, not a wrong answer), and all 58
+`call-agent/tests/` pass. One caveat seen in a separate 12-run sample: the
+S3 retry-count question abstained once where it normally answers — the
+eval hit it 3/3, so it reads as occasional compose variance rather than a
+regression, but it is worth watching during a demo.
+
 ### Audit — screen share, code-level (2 real defects found and fixed)
 
 The user asked for a code-only check of the screen-share path (no browser
