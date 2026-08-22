@@ -109,6 +109,35 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — the agent was reading citation ids out loud
+
+Caught by the user in a live call. The composed answer carries inline
+`[ev_xxx]` markers (that's the grounding contract, and the evidence panel
+renders them as chips), but TTS reads them literally, so Photon actually
+said: *"Meridian is a B2B booking and scheduling platform, ev 20021cda."*
+
+`call-agent/speech.py` (new) — `for_speech()` strips citation markers with
+one regex, applied ONLY on the path to `adapter.speak()`. The structured
+answer published to the browser keeps every marker, so citation chips,
+claims and the verifier are all untouched — this is purely the split
+between what's shown and what's spoken, which the voice rules already
+assume ("never read a file path or line number aloud; it's shown on
+screen instead").
+
+The pattern handles the three shapes that actually occur: a lone marker,
+several ids inside one bracket (`[ev_80abd768, ev_4879aa12]` — the compose
+model really does emit these), and runs of adjacent markers. It also eats
+the space *before* the bracket, so "platform [ev_x]." closes up to
+"platform." rather than leaving "platform ." for the TTS to pause on. Non-
+citation brackets are left alone (`The field [webhook_url] is empty`).
+
+**Verified**: 9 new tests in `call-agent/tests/test_speech.py` (67 total
+in that suite, all passing), plus end to end through the real
+`Orchestrator` — spoken text "Bangalore has a reseller and referral
+agreement in place for partner-tier accounts." vs the same turn's
+published-to-UI text ending "...accounts [ev_80abd768]." Markers absent
+from one, intact in the other.
+
 ### Fix — vision call 4.0s -> 1.3s, and a per-call TLS handshake tax on everything
 
 The screen-share audit measured a visual turn at 7.4s, of which the vision

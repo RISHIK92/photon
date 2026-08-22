@@ -26,6 +26,7 @@ import structlog
 
 from adapters.base import TransportAdapter
 from small_talk import GREETING_REPLY, Turn, classify
+from speech import for_speech
 
 log = structlog.get_logger()
 
@@ -138,7 +139,11 @@ class Orchestrator:
 
         answer = (result.get("answer") or "").strip()
         if answer:
-            await self.adapter.speak(answer)
+            # Spoken text drops the [ev_xxx] markers — TTS reads them out
+            # literally ("...platform ev 20021cda"). The structured answer
+            # already went to the browser with every marker intact, so the
+            # evidence chips are unaffected.
+            await self.adapter.speak(for_speech(answer))
         else:
             log.warning("orchestrator.empty_answer", question=question, result=result)
 
