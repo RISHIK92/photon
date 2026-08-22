@@ -14,8 +14,12 @@ type Turn = {
 
 /**
  * Real shapes: the Telugu line is the one that was actually put through
- * Sarvam STT on a live call, and the timings are the measured end-to-end
- * turns for each language, not illustrative numbers.
+ * speech-to-text on a live call, and the timings are the measured
+ * end-to-end turns for each language, not illustrative numbers.
+ *
+ * (Vendors are deliberately unnamed here and in the UI copy: what a reader
+ * is being told is that this works in their language and how long it takes,
+ * and the supplier behind that has already changed once.)
  */
 const TURNS: Turn[] = [
   {

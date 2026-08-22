@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { map, useSectionProgress } from "./scroll";
 
 const FRAMES = [
-  { n: "01", t: "Hear", ms: "0ms", d: "Deepgram or Sarvam transcribes the linked speaker. Script detection picks the reply language — Telugu, Tamil, Hindi, English." },
+  { n: "01", t: "Hear", ms: "0ms", d: "Speech-to-text transcribes the linked speaker. Script detection picks the reply language — Telugu, Tamil, Hindi, English." },
   { n: "02", t: "Triage", ms: "0ms", d: "A regex gate, no model and no network: greetings get an instant line, side conversation gets silence, anything question-shaped goes to the pipeline." },
   { n: "03", t: "Plan", ms: "~1.0s", d: "One planner call picks the tools the question actually needs — usually one, sometimes two. It never guesses a repo id; the loop forces that." },
   { n: "04", t: "Gather", ms: "~0.4s", d: "Tool calls run in parallel across code, docs, Slack, Jira, tickets, accounts, logs and the provenance graph. Each returns evidence with a real locator." },

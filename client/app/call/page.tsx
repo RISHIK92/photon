@@ -500,7 +500,9 @@ function Lobby({
           )}
         </div>
 
-        <div className="l-sheet h-fit p-6">
+        {/* flat, not a raised sheet — the rest of this design is hairlines on
+            paper, and a drop-shadowed card reads as a different product */}
+        <div className="h-fit border-t pt-6" style={{ borderColor: "var(--l-rust)" }}>
           <p className="text-[10px] tracking-[0.26em] uppercase l-t-muted">
             {signedIn ? "Or join with a code" : "Meeting code"}
           </p>
