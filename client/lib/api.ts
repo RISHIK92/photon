@@ -241,3 +241,37 @@ export const getMeeting = (slug: string) => api<Meeting>(`/api/meetings/${slug}`
 
 export const transcriptUrl = (slug: string, download = false) =>
   `${BASE}/api/meetings/${slug}/transcript.md${download ? "?download=true" : ""}`;
+
+
+// ── Call setup ───────────────────────────────────────────────────────────
+export type BotType = { key: string; label: string; description: string; internal_caution: boolean };
+export type LanguageMode = { key: string; label: string; detail: string };
+export type CallSource = {
+  key: string;
+  label: string;
+  available: boolean;
+  detail: string;
+  default_enabled: boolean;
+  coming_soon: boolean;
+  tools: string[];
+};
+export type CallOptions = {
+  bot_types: BotType[];
+  language_modes: LanguageMode[];
+  sources: CallSource[];
+  default_enabled: string[];
+};
+
+export const getCallOptions = () => api<CallOptions>("/api/meetings/options/catalog");
+
+export const createConfiguredMeeting = (config: {
+  title?: string | null;
+  bot_types: string[];
+  language_mode: string;
+  enabled_sources: string[];
+}) => api<Meeting>("/api/meetings", { method: "POST", body: JSON.stringify(config) });
+
+export const updateMeetingConfig = (
+  slug: string,
+  config: { bot_types?: string[]; language_mode?: string; enabled_sources?: string[] }
+) => api<Meeting>(`/api/meetings/${slug}/config`, { method: "PATCH", body: JSON.stringify(config) });

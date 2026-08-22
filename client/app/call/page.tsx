@@ -1,7 +1,7 @@
 "use client";
 
 import "@livekit/components-styles";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import { AgentAnswer } from "@/lib/evidence";
 import { getWorkspaceId } from "@/lib/api";
@@ -9,12 +9,14 @@ import EvidencePanel from "./EvidencePanel";
 import AccountSummary from "./AccountSummary";
 import CaptionsBridge from "./CaptionsBridge";
 import PokeButton from "./PokeButton";
+import CallSetup from "./CallSetup";
+import ConnectSourcePrompt from "./ConnectSourcePrompt";
 import CaptionsPanel from "./CaptionsPanel";
 import TraceBridge from "./TraceBridge";
 import AdvancedPanel from "./AdvancedPanel";
 import { mergeCaption, type Caption } from "@/lib/captions";
 import { applyTraceEvent, type TraceEvent, type TurnTrace } from "@/lib/trace";
-import { createMeeting, getToken, transcriptUrl } from "@/lib/api";
+import { createConfiguredMeeting, getToken, transcriptUrl } from "@/lib/api";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
@@ -28,6 +30,23 @@ export default function CallPage() {
   // users create one; anyone with the code — including external guests who
   // are not workspace members — can join it.
   const [meetingCode, setMeetingCode] = useState("");
+  // Which source the user asked to connect, if any. Held here rather than
+  // inside CallSetup because accepting navigates away from the call.
+  const [connectPrompt, setConnectPrompt] = useState<string | null>(null);
+
+  // Whether someone is signed in can only be known on the client
+  // (localStorage), so it starts false and is set after mount. Reading it
+  // directly during render made the server and client disagree — a real
+  // hydration mismatch, not a warning to silence.
+  const [signedIn, setSignedIn] = useState(false);
+
+  // Returning from "Connect now" lands here with the original code, so the
+  // user rejoins the same meeting instead of losing the one they set up.
+  useEffect(() => {
+    setSignedIn(!!getToken());
+    const code = new URLSearchParams(window.location.search).get("code");
+    if (code) setMeetingCode(code);
+  }, []);
   const [state, setState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
@@ -37,48 +56,57 @@ export default function CallPage() {
   const [textInput, setTextInput] = useState("");
   const [textBusy, setTextBusy] = useState(false);
 
-  const connect = useCallback(async () => {
-    setState("connecting");
-    setError(null);
-    try {
-      const token = getToken();
-      let code = meetingCode.trim().toLowerCase();
+  const connect = useCallback(
+    async (config?: { bot_types: string[]; language_mode: string; enabled_sources: string[] }) => {
+      setState("connecting");
+      setError(null);
+      try {
+        const token = getToken();
+        let code = meetingCode.trim().toLowerCase();
 
-      if (!code) {
+        if (!code) {
+          if (!token) {
+            setError("Enter a meeting code to join, or sign in to start one.");
+            setState("idle");
+            return;
+          }
+          // A new call carries the configuration chosen on the setup screen;
+          // joining an existing code inherits whatever that call was set up
+          // with, which is why config is only sent when creating.
+          code = (
+            await createConfiguredMeeting({
+              bot_types: config?.bot_types ?? ["support"],
+              language_mode: config?.language_mode ?? "english",
+              enabled_sources: config?.enabled_sources ?? [],
+            })
+          ).slug;
+          setMeetingCode(code);
+        }
+
+        const params = new URLSearchParams({ room: code });
         if (!token) {
-          setError("Enter a meeting code to join, or sign in to start one.");
-          setState("idle");
-          return;
+          if (!identity.trim()) {
+            setError("Enter your name to join as a guest.");
+            setState("idle");
+            return;
+          }
+          params.set("name", identity.trim());
         }
-        code = (await createMeeting()).slug;
-        setMeetingCode(code);
-      }
 
-      // Identity is NEVER sent from here: the route derives it from the
-      // signed-in session, or issues a guest identity. A name is only used
-      // as a guest's display label.
-      const params = new URLSearchParams({ room: code });
-      if (!token) {
-        if (!identity.trim()) {
-          setError("Enter your name to join as a guest.");
-          setState("idle");
-          return;
-        }
-        params.set("name", identity.trim());
+        const res = await fetch(`/api/livekit-token?${params}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "failed to get a token");
+        setTokenData({ url: data.url, token: data.token });
+        setState("connected");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setState("error");
       }
-
-      const res = await fetch(`/api/livekit-token?${params}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "failed to get a token");
-      setTokenData({ url: data.url, token: data.token });
-      setState("connected");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setState("error");
-    }
-  }, [identity, meetingCode]);
+    },
+    [identity, meetingCode]
+  );
 
   const onDisconnected = useCallback(() => {
     setState("idle");
@@ -183,38 +211,70 @@ export default function CallPage() {
 
   return (
     <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
+      {connectPrompt && (
+        <ConnectSourcePrompt
+          sourceLabel={connectPrompt.replace(/_/g, " ")}
+          inCall={state === "connected"}
+          onAccept={() => {
+            // Carry the meeting code through the detour so the user comes
+            // back to THIS call rather than starting a fresh one.
+            const back = meetingCode ? `/call?code=${meetingCode}` : "/call";
+            window.location.href =
+              `/dashboard?connect=${connectPrompt}&return=${encodeURIComponent(back)}`;
+          }}
+          onLater={() => setConnectPrompt(null)}
+        />
+      )}
       <header className="border-b border-neutral-800 px-6 py-4 shrink-0">
-        <h1 className="text-lg font-semibold">Meridian support call</h1>
+        <h1 className="text-lg font-semibold">Photon call</h1>
         <p className="text-sm text-neutral-400">
-          Talk to Photon, Meridian&apos;s support agent — it&apos;s listening the whole time,
-          no wake word needed. Use the text box on the right if audio isn&apos;t working.
+          Press <span className="text-neutral-200">Ask Photon</span> to address the agent — it
+          answers the person who asked, so side conversations stay private.
         </p>
       </header>
 
       <main className="flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-6 p-6 min-h-0 overflow-hidden">
-        <section className="flex flex-col gap-3 min-h-0">
+        {/* The pre-call setup is taller than the viewport on a laptop, and
+            the page itself is overflow-hidden so the two panes stay
+            independent — so this pane scrolls on its own. */}
+        <section className="flex flex-col gap-3 min-h-0 overflow-y-auto">
           {state !== "connected" || !tokenData ? (
-            <div className="flex flex-col gap-3 max-w-sm">
-              <input
-                className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm font-mono"
-                placeholder="Meeting code (abcd-efgh) — blank starts a new one"
-                value={meetingCode}
-                onChange={(e) => setMeetingCode(e.target.value)}
-              />
-              <input
-                className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
-                placeholder="Your name (guests only)"
-                value={identity}
-                onChange={(e) => setIdentity(e.target.value)}
-              />
-              <button
-                onClick={connect}
-                disabled={state === "connecting"}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
-              >
-                {state === "connecting" ? "Connecting…" : "Join call"}
-              </button>
-              {error && <p className="text-red-400 text-sm">{error}</p>}
+            <div className="flex flex-col gap-6">
+              {signedIn && !meetingCode.trim() ? (
+                <CallSetup
+                  busy={state === "connecting"}
+                  onConnectSource={(key) => setConnectPrompt(key)}
+                  onStart={(config) => connect(config)}
+                />
+              ) : null}
+
+              <div className="flex flex-col gap-3 max-w-sm">
+                <p className="text-xs uppercase tracking-wide text-neutral-500">
+                  {signedIn ? "or join an existing call" : "join a call"}
+                </p>
+                <input
+                  className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm font-mono"
+                  placeholder="Meeting code (abcd-efgh)"
+                  value={meetingCode}
+                  onChange={(e) => setMeetingCode(e.target.value)}
+                />
+                {!signedIn && (
+                  <input
+                    className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
+                    placeholder="Your name"
+                    value={identity}
+                    onChange={(e) => setIdentity(e.target.value)}
+                  />
+                )}
+                <button
+                  onClick={() => connect()}
+                  disabled={state === "connecting" || !meetingCode.trim()}
+                  className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 rounded px-4 py-2 text-sm font-medium"
+                >
+                  {state === "connecting" ? "Connecting…" : "Join with code"}
+                </button>
+                {error && <p className="text-red-400 text-sm">{error}</p>}
+              </div>
             </div>
           ) : (
             <>
