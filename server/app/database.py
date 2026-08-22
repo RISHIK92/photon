@@ -32,3 +32,14 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE repos ADD COLUMN IF NOT EXISTS owner_id VARCHAR REFERENCES users(id) ON DELETE SET NULL"
         ))
+        # create_all() creates missing TABLES but never adds a column to an
+        # existing one, so every new column needs a line here. Same
+        # idempotent pattern as owner_id above. This is a stopgap that suits
+        # a fast-moving build; if this outlives the demo, replace the whole
+        # block with Alembic before the data matters.
+        await conn.execute(text(
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS workspace_id VARCHAR REFERENCES workspaces(id) ON DELETE CASCADE"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_repos_workspace_id ON repos (workspace_id)"
+        ))

@@ -9,13 +9,26 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
 
 from app.database import get_session
-from app.models import Repo, RepoCreate, RepoRead, RepoStatus, RepoSourceType, Job, User
+from app.models import Repo, RepoCreate, RepoRead, RepoStatus, RepoSourceType, Job, User, Workspace
 from app.config import get_settings
 from app.tasks.ingestion import run_ingestion
 from app.core.auth import get_current_user
+from app.core.workspace import get_current_workspace
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _may_access(repo: Repo, user: User, workspace: Workspace) -> bool:
+    """Workspace membership is the rule; owner_id is a legacy fallback.
+
+    Repos created before workspaces existed have workspace_id = NULL, and
+    silently 404ing someone's own repo after an upgrade would look like
+    data loss. Once those are backfilled this fallback can go.
+    """
+    if repo.workspace_id:
+        return repo.workspace_id == workspace.id
+    return repo.owner_id == user.id
 
 
 @router.post("", response_model=RepoRead, status_code=201)
@@ -23,9 +36,10 @@ async def create_repo(
     payload: RepoCreate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
 ):
     """Connect a repository (GitHub URL or local path)."""
-    repo = Repo(**payload.model_dump(), owner_id=current_user.id)
+    repo = Repo(**payload.model_dump(), owner_id=current_user.id, workspace_id=workspace.id)
     session.add(repo)
     await session.commit()
     await session.refresh(repo)
@@ -89,9 +103,12 @@ async def upload_zip(
 async def list_repos(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
 ):
+    # Workspace-scoped, not user-scoped: a teammate joining a workspace
+    # must see its repos, and the same repo must NOT leak across workspaces.
     result = await session.execute(
-        select(Repo).where(Repo.owner_id == current_user.id).order_by(Repo.created_at.desc())
+        select(Repo).where(Repo.workspace_id == workspace.id).order_by(Repo.created_at.desc())
     )
     return result.scalars().all()
 
@@ -101,12 +118,13 @@ async def get_repo(
     repo_id: str,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
 ):
     repo = await session.get(Repo, repo_id)
     if not repo:
         raise HTTPException(status_code=404, detail="Repo not found")
-    if repo.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    if not _may_access(repo, current_user, workspace):
+        raise HTTPException(status_code=404, detail="Repo not found")
     return repo
 
 
@@ -115,11 +133,12 @@ async def delete_repo(
     repo_id: str,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
 ):
     repo = await session.get(Repo, repo_id)
     if not repo:
         raise HTTPException(status_code=404, detail="Repo not found")
-    if repo.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    if not _may_access(repo, current_user, workspace):
+        raise HTTPException(status_code=404, detail="Repo not found")
     await session.delete(repo)
     await session.commit()

@@ -27,6 +27,50 @@ class UserRead(SQLModel):
     created_at: datetime
 
 
+# ─── Workspace (the tenant) ───────────────────────────────────────────────────
+# Everything a customer owns hangs off a workspace, not off a user: repos
+# today, and Slack/email connectors, agents and transcripts next. A user is
+# a login; a workspace is the thing that HAS data and can be shared. This is
+# in from the start deliberately — retrofitting a tenant boundary under live
+# data is far more expensive than carrying it now.
+
+
+class WorkspaceRole(str, Enum):
+    OWNER = "owner"
+    MEMBER = "member"
+
+
+class Workspace(SQLModel, table=True):
+    __tablename__ = "workspaces"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str
+    # True for the workspace auto-created on signup, so the UI can label it
+    # and never offer to delete a user's only home.
+    is_personal: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WorkspaceMember(SQLModel, table=True):
+    __tablename__ = "workspace_members"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    user_id: str = Field(sa_column=Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True))
+    role: WorkspaceRole = WorkspaceRole.MEMBER
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WorkspaceCreate(SQLModel):
+    name: str
+
+
+class WorkspaceRead(SQLModel):
+    id: str
+    name: str
+    is_personal: bool
+    role: WorkspaceRole
+    created_at: datetime
+
+
 # ─── Enums ────────────────────────────────────────────────────────────────────
 
 class RepoStatus(str, Enum):
@@ -79,7 +123,10 @@ class RepoBase(SQLModel):
 class Repo(RepoBase, table=True):
     __tablename__ = "repos"
     id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    # owner_id stays as provenance ("who connected this"); workspace_id is
+    # what authorisation is actually checked against.
     owner_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    workspace_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     jobs: List["Job"] = Relationship(back_populates="repo", sa_relationship_kwargs={"cascade": "all, delete-orphan"})
