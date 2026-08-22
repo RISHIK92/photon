@@ -172,6 +172,11 @@ async def list_installation_repos(
             "full_name": r["full_name"],
             "private": r["private"],
             "clone_url": r["clone_url"],
+            # GitHub reports size in KB. Carried through so the picker can
+            # show an ingest-time estimate BEFORE anything is cloned —
+            # file counts don't exist yet at this point (see
+            # services/estimate.py:files_from_size_kb).
+            "size_kb": r.get("size") or 0,
             "already_imported": r["id"] in imported_ids,
         }
         for r in repos

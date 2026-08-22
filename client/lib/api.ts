@@ -187,6 +187,7 @@ export type GithubRepoOption = {
   full_name: string;
   private: boolean;
   clone_url: string;
+  size_kb: number;
   already_imported: boolean;
 };
 

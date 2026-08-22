@@ -8,9 +8,11 @@ import {
   createWorkspace,
   deleteRepo,
   getWorkspaceId,
+  estimateIngest,
   importGithubRepos,
   listGithubInstallations,
   listInstallationRepos,
+  type IngestEstimate,
   listRepos,
   listWorkspaces,
   logout,
@@ -49,6 +51,7 @@ function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [ghConnecting, setGhConnecting] = useState(false);
   const [ghInstallationId, setGhInstallationId] = useState<number | null>(null);
+  const [ghEstimate, setGhEstimate] = useState<IngestEstimate | null>(null);
   const [ghRepos, setGhRepos] = useState<GithubRepoOption[]>([]);
   const [ghSelected, setGhSelected] = useState<Set<number>>(new Set());
   const [ghBusy, setGhBusy] = useState(false);
@@ -103,6 +106,25 @@ function Dashboard() {
       setGhBusy(false);
     }
   }, []);
+
+  // Re-estimate whenever the selection changes. Debounced because ticking
+  // several boxes quickly would otherwise fire a request per click, and the
+  // answer is a coarse range — it does not need to track every keystroke.
+  useEffect(() => {
+    const chosen = ghRepos.filter((r) => ghSelected.has(r.id) && !r.already_imported);
+    if (chosen.length === 0) {
+      setGhEstimate(null);
+      return;
+    }
+    const handle = setTimeout(() => {
+      estimateIngest({ size_kb: chosen.map((r) => r.size_kb) })
+        .then(setGhEstimate)
+        // An estimate is a convenience; failing to get one must not block
+        // the import button.
+        .catch(() => setGhEstimate(null));
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [ghRepos, ghSelected]);
 
   // GitHub redirects back here after an installation with ?installation=connected
   // but no installation_id — the app may have multiple installations, so we
@@ -288,13 +310,24 @@ function Dashboard() {
                       </li>
                     ))}
                   </ul>
-                  <button
-                    onClick={importSelected}
-                    disabled={ghBusy || ghSelected.size === 0}
-                    className="mt-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
-                  >
-                    {ghBusy ? "Importing…" : `Import ${ghSelected.size} repo${ghSelected.size === 1 ? "" : "s"}`}
-                  </button>
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      onClick={importSelected}
+                      disabled={ghBusy || ghSelected.size === 0}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
+                    >
+                      {ghBusy ? "Importing…" : `Import ${ghSelected.size} repo${ghSelected.size === 1 ? "" : "s"}`}
+                    </button>
+                    {ghEstimate && (
+                      <p className="text-xs text-neutral-500">
+                        about <span className="text-neutral-300">{ghEstimate.range_human}</span> to
+                        parse and index
+                        {ghEstimate.calibrated
+                          ? ` · from ${ghEstimate.sample_size} previous imports`
+                          : " · rough, not yet calibrated here"}
+                      </p>
+                    )}
+                  </div>
                 </>
               )}
             </div>

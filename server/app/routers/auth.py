@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 
 import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -16,6 +17,7 @@ from app.models import User, UserCreate, UserRead
 from app.core.auth import hash_password, verify_password, create_access_token, get_current_user
 from app.core.workspace import ensure_personal_workspace
 
+log = structlog.get_logger()
 router = APIRouter()
 settings = get_settings()
 
@@ -135,16 +137,37 @@ async def github_callback(
 
         email = gh_user.get("email")
         if not email:
-            # Private-email users don't expose it on /user — the scoped
-            # /user/emails call (covered by the user:email scope above) does.
-            emails_resp = await client.get("https://api.github.com/user/emails", headers=gh_headers)
-            emails_resp.raise_for_status()
-            emails = emails_resp.json()
-            primary = next((e["email"] for e in emails if e.get("primary") and e.get("verified")), None)
-            email = primary or next((e["email"] for e in emails if e.get("verified")), None)
+            # Private-email users don't expose it on /user. /user/emails
+            # can supply it — but ONLY if the App holds the "Email
+            # addresses" account permission. A GitHub App's user token
+            # derives access from the App's PERMISSIONS, not from OAuth
+            # scopes, so the `scope=user:email` in the authorize URL buys
+            # nothing here and this call 403s on an App that wasn't granted
+            # it. Observed live: 403 Forbidden, which crashed sign-in
+            # outright for anyone with a private email.
+            #
+            # Treated as optional rather than required: sign-in must not
+            # depend on a permission we can add later, and GitHub gives
+            # every account a stable noreply address we can fall back to.
+            try:
+                emails_resp = await client.get("https://api.github.com/user/emails", headers=gh_headers)
+                if emails_resp.status_code == 200:
+                    emails = emails_resp.json()
+                    primary = next((e["email"] for e in emails if e.get("primary") and e.get("verified")), None)
+                    email = primary or next((e["email"] for e in emails if e.get("verified")), None)
+                else:
+                    log.info("auth.github_emails_unavailable", status=emails_resp.status_code)
+            except httpx.HTTPError as exc:
+                log.info("auth.github_emails_failed", error=str(exc))
 
     if not email:
-        raise HTTPException(status_code=400, detail="Could not get a verified email address from GitHub")
+        # GitHub's own no-reply convention. Stable, unique per account, and
+        # deliverable-to-nobody by design — which is correct here, since we
+        # use email as an identity key, not as a way to contact anyone.
+        login = gh_user.get("login")
+        if not login:
+            raise HTTPException(status_code=400, detail="GitHub did not return a usable account identity")
+        email = f"{gh_user['id']}+{login}@users.noreply.github.com"
 
     github_id = str(gh_user["id"])
     email = email.lower().strip()

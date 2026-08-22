@@ -118,7 +118,28 @@ def estimate(
     )
 
 
+# What to assume when GitHub gives us no size at all. Picked as a typical
+# small-service repo rather than an average, so an unknown repo is not
+# quietly estimated as trivial.
+UNKNOWN_REPO_FILES = 120
+
+
 def files_from_size_kb(size_kb: int) -> int:
     """Rough file count from GitHub's repo `size` field, for repos we have
-    not cloned yet. Only ever feeds an explicitly-ranged estimate."""
+    not cloned yet. Only ever feeds an explicitly-ranged estimate.
+
+    Returns a real assumption rather than 1 when the size is missing or
+    zero: GitHub omits `size` on some responses (and returns nothing at all
+    when rate-limited), and `max(1, 0)` would have turned "I don't know"
+    into "this repo is empty, it'll be instant" — the estimate would read
+    as confident and be badly wrong.
+
+    KB_PER_FILE itself is still a rough constant: it could not be
+    calibrated against real repo sizes here because the unauthenticated
+    GitHub API rate-limited, and no installation token existed yet. Once an
+    installation exists, calibrate it from repos we have both sizes and
+    file counts for.
+    """
+    if not size_kb or size_kb <= 0:
+        return UNKNOWN_REPO_FILES
     return max(1, int(size_kb / KB_PER_FILE))
