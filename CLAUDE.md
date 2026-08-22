@@ -109,6 +109,66 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Live — Sarvam switched on for the whole voice stack (STT + TTS)
+
+`call-agent/.env` now sets `VOICE_STACK=sarvam` with the real
+`SARVAM_API_KEY` (copied from `server/.env`, where the user had put it),
+`SARVAM_TTS_MODEL=bulbul:v3`, `SARVAM_STT_MODEL=saaras:v3`. **The code
+default is still deepgram** — this is a config switch, not a code change,
+so removing those lines reverts everything.
+
+**Measured TTS time-to-first-audio through the actual LiveKit plugin**
+(WebSocket streaming, which is what a call pays — not REST synthesis).
+Sarvam publishes no latency figures at all, so this is the only source:
+
+| model | en-IN | hi-IN | te-IN | ta-IN |
+|---|---|---|---|---|
+| `bulbul:v3` | 1.06-1.31s | 1.09-1.11s | 1.25-1.43s | **1.90-2.11s** |
+| `bulbul:v2` | 0.76s | 0.68-1.78s | 0.42-0.63s | 0.35-0.66s |
+
+So v3 costs roughly **+0.5 to +1.4s of speaking latency** over v2, worst
+in Tamil. On top of a ~2.2s turn that puts first audio at ~3.5-4.3s (v3)
+vs ~2.6-3.0s (v2). `SARVAM_TTS_MODEL=bulbul:v2` is a one-line switch if
+the demo needs the speed more than the prosody.
+
+**Verified live, on a real LiveKit call** (synthesized the caller's Telugu
+question with Sarvam TTS and published it as a real microphone track —
+the only way to exercise Sarvam STT without a Telugu speaker):
+`saaras:v3` transcribed **"బెంగళూరులో ధరలు ఎందుకు వేరుగా ఉన్నాయి? కారణం
+చెప్పండి."** exactly, in native script, which is what makes the
+script-based language detection work; `tts_language_switched language=te-IN`
+fired; the answer came back spoken in Telugu.
+
+**Two real defects that only a live call exposed:**
+
+1. **The planner ignored non-English "why" questions.** Both the live
+   Telugu turn and the earlier Tamil one fell back to a generic account
+   lookup and answered "Bangalore is Calico Transit's home city" —
+   grounded in real evidence, but not the question asked. The first
+   language hint ("translate their intent") wasn't specific enough. It now
+   gives an ordered procedure: translate to English FIRST, then apply the
+   tool-matching rules to the English version, and it names the
+   why-markers explicitly (`కారణం / ஏன் / क्यों`). After: all four
+   languages pick `search_code + explain_why` and answer correctly, 2.1-2.9s.
+
+2. **The abstention read internal tool names aloud.** Heard live, in
+   Telugu: "నేను search_code, search_docs చూశాను..." — the agent
+   pronouncing `search_code` mid-sentence. That breaks the voice rule
+   "lead with the finding, not the method", which had only ever been
+   applied to composed answers, never to the hand-written abstention. It
+   no longer names tools in any language; the tool pills in the evidence
+   panel are where that belongs.
+
+English is unaffected: eval 16/16, median 2133ms. 99 call-agent tests pass.
+
+**Known limit, unchanged**: STT accuracy is now the weakest link, not the
+agent. One synthesized Telugu utterance came back with "ఎందుకు" (why)
+transcribed as "ఇందుకు" (for this), turning the question into a statement
+— the agent correctly abstained rather than guessing, but a mis-heard word
+is a mis-answered question. `SARVAM_STT_LANGUAGE=te-IN` (instead of the
+`unknown` auto-detect default) is the first thing to try if a specific
+language dominates a call.
+
 ### Feature — multilingual voice (Telugu/Tamil/Hindi/English) behind `VOICE_STACK`
 
 The user wants Indic language support and asked for the whole path behind

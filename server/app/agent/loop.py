@@ -113,23 +113,24 @@ def _dedupe_evidence(evidence: list[dict]) -> list[dict]:
 # be answered in their language if the sentence is pre-written. Keyed to
 # the same BCP-47 codes the voice stack uses.
 _ABSTENTION = {
-    "en-IN": ("I don't have evidence for that. I checked {tools} and found nothing relevant to your question.",
-              "I don't have evidence for that — none of my tools returned anything relevant."),
-    "hi-IN": ("मेरे पास इसका कोई प्रमाण नहीं है। मैंने {tools} देखा और कुछ प्रासंगिक नहीं मिला।",
-              "मेरे पास इसका कोई प्रमाण नहीं है — मेरे किसी भी टूल से कुछ प्रासंगिक नहीं मिला।"),
-    "te-IN": ("దీనికి నా దగ్గర ఆధారం లేదు. నేను {tools} చూశాను, సంబంధించినది ఏమీ దొరకలేదు.",
-              "దీనికి నా దగ్గర ఆధారం లేదు — నా టూల్స్ ఏవీ సంబంధిత సమాచారం ఇవ్వలేదు."),
-    "ta-IN": ("இதற்கு என்னிடம் ஆதாரம் இல்லை. நான் {tools} பார்த்தேன், தொடர்புடையது எதுவும் கிடைக்கவில்லை.",
-              "இதற்கு என்னிடம் ஆதாரம் இல்லை — என் கருவிகள் எதுவும் தொடர்புடையதைத் தரவில்லை."),
+    "en-IN": "I don't have evidence for that — nothing I searched turned up anything relevant.",
+    "hi-IN": "मेरे पास इसका कोई प्रमाण नहीं है — मुझे कुछ भी प्रासंगिक नहीं मिला।",
+    "te-IN": "దీనికి నా దగ్గర ఆధారం లేదు — సంబంధించిన సమాచారం ఏమీ దొరకలేదు.",
+    "ta-IN": "இதற்கு என்னிடம் ஆதாரம் இல்லை — தொடர்புடைய தகவல் எதுவும் கிடைக்கவில்லை.",
 }
 
 
 def _no_evidence_abstention(tool_trace: list[dict], language: str | None = None) -> str:
-    with_tools, without_tools = _ABSTENTION.get(language or "en-IN", _ABSTENTION["en-IN"])
-    tools_tried = ", ".join(sorted({t["tool"] for t in tool_trace}))
-    # No tools ran at all -> the old string said "I checked any tools",
-    # which is just broken English; that case needs its own sentence.
-    return with_tools.format(tools=tools_tried) if tools_tried else without_tools
+    """Deliberately does NOT name the tools it tried.
+
+    It used to ("I checked search_code, search_docs and found nothing"),
+    which broke the voice rule "lead with the finding, not the method" —
+    heard live, the agent read internal tool names aloud mid-sentence, in
+    Telugu. The tools are already shown as pills in the evidence panel,
+    where they belong. It also used to say "I checked any tools" when no
+    tool ran at all, which was simply broken English.
+    """
+    return _ABSTENTION.get(language or "en-IN", _ABSTENTION["en-IN"])
 
 
 async def answer_question(

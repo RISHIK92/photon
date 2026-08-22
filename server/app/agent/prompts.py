@@ -156,11 +156,15 @@ def _format_evidence(evidence: list[dict]) -> str:
 
 
 _PLAN_LANGUAGE_HINT = """
-The customer asked in {language_name}, but every tool, document, code file and account name \
-in this system is in ENGLISH. Translate their intent yourself and write EVERY tool argument \
-(queries, symbols, file paths) in English — a Telugu or Tamil search string will match \
-nothing. Choose tools exactly as you would for the same question asked in English; do not \
-fall back to a generic account lookup just because the wording is unfamiliar.
+The customer asked in {language_name}. Do this in order:
+1. Translate their question into English in your head, FIRST, before choosing anything.
+2. Then apply the tool-matching rules above to that ENGLISH question, exactly as if they had \
+typed it in English. A "why / for what reason / కారణం / ஏன் / क्यों" question is a why-question \
+in any language, and takes search_code + explain_why — not an account lookup.
+3. Write EVERY tool argument (queries, symbols, file paths) in English. The code, docs, Slack \
+and account names are all English; a Telugu or Tamil search string matches nothing.
+
+Never fall back to a generic account lookup just because the wording is unfamiliar.
 """
 
 
