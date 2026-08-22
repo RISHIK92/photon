@@ -57,15 +57,22 @@ class _InterceptAgent(agents.Agent):
     always prevents LiveKit's own (unconfigured) LLM node from also trying
     to generate a reply — this agent never composes an answer itself."""
 
-    def __init__(self, callbacks: SessionCallbacks, speaker_id: str):
+    def __init__(self, callbacks: SessionCallbacks, speaker_id_fn):
         super().__init__(instructions="unused — this agent never generates its own replies")
         self._callbacks = callbacks
-        self._speaker_id = speaker_id
+        # A callable, not a fixed string: who is speaking changes during a
+        # call, and it was previously captured ONCE at construction — as
+        # the agent's own identity, so every human utterance was attributed
+        # to the agent. Visible in the logs as
+        # `speech_finalized speaker_id=agent-AJ_...` for things a person
+        # said. Everything that depends on identity (transcripts,
+        # per-speaker source scoping) was wrong because of it.
+        self._speaker_id_fn = speaker_id_fn
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         text = (new_message.text_content or "").strip()
         if text:
-            await self._callbacks.on_speech(text, self._speaker_id, is_final=True)
+            await self._callbacks.on_speech(text, self._speaker_id_fn(), is_final=True)
         raise StopResponse()
 
 
@@ -112,7 +119,7 @@ class LiveKitAdapter:
             tts=self._tts,
             vad=silero.VAD.load(),
         )
-        agent = _InterceptAgent(self._callbacks, speaker_id=self._local_speaker_id())
+        agent = _InterceptAgent(self._callbacks, speaker_id_fn=self._current_speaker_id)
 
         self._ctx.room.on("track_subscribed", self._on_track_subscribed)
         # `track_subscribed` only fires for tracks that arrive AFTER this
@@ -131,7 +138,20 @@ class LiveKitAdapter:
         )
         await self.announce(ANNOUNCEMENT)
 
-    def _local_speaker_id(self) -> str:
+    def _current_speaker_id(self) -> str:
+        """Identity of the participant the session is actually listening to.
+
+        LiveKit's RoomIO links exactly ONE participant at a time
+        (`linked_participant` / `set_participant`), so this is unambiguous
+        — and it is the human, not us. Falls back to the local identity
+        only if nothing is linked yet, which should not happen for a real
+        turn.
+        """
+        room_io = getattr(self._session, "_room_io", None) or getattr(self._session, "room_io", None)
+        linked = getattr(room_io, "linked_participant", None) if room_io else None
+        if linked is not None and getattr(linked, "identity", None):
+            return linked.identity
+        log.warning("livekit_adapter.speaker_unresolved")
         return self._ctx.room.local_participant.identity or "unknown"
 
     def _attach_existing_screenshare(self) -> None:
