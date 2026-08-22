@@ -109,6 +109,50 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — the worker closed its own HTTP client right after startup
+
+The user reported audio/TTS not working and asked to check the logs.
+Investigated with a rigorous live test (not guessing): synthesized real
+speech with macOS `say -o ... --data-format=LEI16@16000`, published it as
+a fake microphone track into an isolated LiveKit room via `rtc.AudioSource`
++ `rtc.LocalAudioTrack` (paced in real time, not dumped as one blob), and
+watched the worker's own logs.
+
+**What the logs showed**: STT transcribed correctly, wake-word detection
+fired, `orchestrator.speech_finalized` logged the right text — but then
+`orchestrator.brain_api_error error='Cannot send a request, as the client
+has been closed.'`, and the agent spoke its fallback error line instead
+of a real answer. Root cause in `call-agent/worker.py`: `entrypoint()`
+called `await adapter.start()`, which returns as soon as the
+`AgentSession` is up and the announcement has played — it does **not**
+block for the life of the call. Execution fell straight through to the
+`finally` block, which closed the orchestrator's `httpx.AsyncClient`
+while the session kept running in the background. Every real question
+asked any time after startup hit a closed client.
+
+Fixed by blocking `entrypoint()` on `ctx.room`'s `"disconnected"` event
+before falling into `finally`, so the orchestrator (and its HTTP client)
+now lives for the actual duration of the call.
+
+**Re-verified with the identical synthetic-speech method after the fix**:
+same question, this time producing a real, fully-grounded, cited answer —
+"Bangalore has a special case because Meridian has a reseller/referral
+agreement with a partner (BLR Mobility Partners) that gives partner-tier
+accounts a 0.88x commission rate in Bangalore only [ev_80abd768,
+ev_94f68467]. This is a deliberate business decision, not a bug
+[ev_7fa701ec, ev_646abbce]." — confirmed spoken (`conversation_item_added
+{role: assistant, ...}`), not just composed. Took ~80s end to end,
+consistent with the documented DeepSeek latency variance, but completed
+correctly.
+
+**Process note**: while debugging, I killed the running worker to test
+the fix, which also dropped the agent's connection to the `photon` room —
+where a participant named `rishik` (very likely the user testing live)
+was already present. Restarted the worker immediately after: their
+existing browser tab should reconnect on its own via LiveKit's automatic
+reconnection, but flagging this here in case anything looked like it
+glitched mid-session.
+
 ### Fix — the join page didn't actually look like a meeting
 
 The user caught a real miss after Phase 5 shipped: `client/app/call/`

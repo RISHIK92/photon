@@ -8,11 +8,12 @@ file is our own, written against the actual 1.7 API, not copied from it.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 
 import structlog
 from dotenv import load_dotenv
-from livekit import agents
+from livekit import agents, rtc
 
 from adapters.livekit_adapter import LiveKitAdapter
 from orchestrator import Orchestrator
@@ -46,6 +47,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
         await adapter.start()
         log.info("worker.session_started", room=ctx.room.name)
+
+        # BUG (caught live, not in review): adapter.start() returns as soon
+        # as the AgentSession is up and the announcement has played — it
+        # does not block for the life of the call. Without this wait,
+        # falling through to `finally` immediately closed the
+        # orchestrator's httpx client while the session kept running in
+        # the background, so every real question after startup failed with
+        # "Cannot send a request, as the client has been closed." and the
+        # agent spoke the fallback error instead of a real answer. Block
+        # here until the room actually disconnects.
+        disconnected = asyncio.Event()
+        ctx.room.on("disconnected", lambda *_: disconnected.set())
+        if ctx.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
+            disconnected.set()
+        await disconnected.wait()
+        log.info("worker.room_disconnected", room=ctx.room.name)
 
     except Exception:
         log.exception("worker.job_failed", room=ctx.room.name)
