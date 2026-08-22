@@ -16,7 +16,16 @@ const BASE = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 const TOKEN_KEY = "photon.token";
 const WORKSPACE_KEY = "photon.workspace";
 
-export type Workspace = { id: string; name: string; is_personal: boolean; role: string; created_at: string };
+export type Workspace = {
+  id: string;
+  name: string;
+  kind?: "individual" | "team";
+  /** What the agent is called here. Null means the product default. */
+  agent_name?: string | null;
+  is_personal: boolean;
+  role: string;
+  created_at: string;
+};
 export type Repo = {
   id: string;
   name: string;
@@ -397,3 +406,10 @@ export const GITHUB_STATE_LABEL: Record<GithubStatus["state"], string> = {
   installed_no_repos: "connected — pick repos",
   ready: "connected",
 };
+
+
+/** Rename the workspace, or name its agent. The agent's name is what it
+ * calls itself in answers, announces on joining, and answers to as the wake
+ * word — so it is a real setting, not decoration. */
+export const updateWorkspace = (patch: { name?: string; agent_name?: string }) =>
+  api<Workspace>("/api/workspaces/settings", { method: "PATCH", body: JSON.stringify(patch) });

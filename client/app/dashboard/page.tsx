@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
 import ConnectGithubDialog from "./ConnectGithubDialog";
 import SourcesGrid from "./SourcesGrid";
+import AgentNameCard from "./AgentNameCard";
 import ConnectSourceModal from "./ConnectSourceModal";
 import {
   connectRepo,
@@ -524,6 +525,8 @@ function Dashboard() {
             </div>
           </section>
         )}
+
+        <AgentNameCard workspaceId={current} />
 
         <SourcesGrid
           githubConnected={ghInstallCount}

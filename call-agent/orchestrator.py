@@ -41,7 +41,17 @@ log = structlog.get_logger()
 # session listens to one linked participant at a time, so a wake word is
 # only heard from whoever is currently linked — the button is what makes
 # addressing work for everyone else.
-WAKE_WORD_RE = re.compile(r"^\s*(hey\s+|ok\s+)?photon\b[\s,:-]*", re.IGNORECASE)
+def wake_word_re(agent_name: str) -> re.Pattern:
+    """The wake word IS the agent's name, so it has to be built per call.
+
+    A workspace that renamed its agent to Ava has people saying "Ava, …" —
+    listening for "Photon" would mean the wake word simply never fires for
+    them, silently, and only the button would work.
+    """
+    return re.compile(rf"^\s*(hey\s+|ok\s+)?{re.escape(agent_name)}\b[\s,:-]*", re.IGNORECASE)
+
+
+DEFAULT_AGENT_NAME = "Photon"
 
 VISUAL_HINT_RE = re.compile(
     r"\b(where do i|i can'?t find|this screen|(on|check|look at|share|see) (my |the )?screen"
@@ -97,12 +107,20 @@ class Orchestrator:
     """Implements SessionCallbacks. Holds no transport objects of its own —
     just a TransportAdapter reference to act through."""
 
-    def __init__(self, adapter: TransportAdapter, brain_api_url: str, meeting_slug: str | None = None):
+    def __init__(
+        self,
+        adapter: TransportAdapter,
+        brain_api_url: str,
+        meeting_slug: str | None = None,
+        agent_name: str | None = None,
+    ):
         self.adapter = adapter
         self.brain_api_url = brain_api_url.rstrip("/")
         # The LiveKit room name IS the meeting slug (abcd-efgh), so the
         # room, the share link and the transcript are one identifier.
         self.meeting_slug = meeting_slug
+        self.agent_name = (agent_name or "").strip() or DEFAULT_AGENT_NAME
+        self._wake_word = wake_word_re(self.agent_name)
         self.state = TurnState()
         self._http = httpx.AsyncClient(timeout=90.0)
 
@@ -121,7 +139,7 @@ class Orchestrator:
     def _is_addressed(self, speaker_id: str, text: str) -> bool:
         """Two ways to address the agent, per the product decision to
         support both a button and saying its name."""
-        if WAKE_WORD_RE.match(text.strip()):
+        if self._wake_word.match(text.strip()):
             return True
         if self.state.addressed_by is None:
             return False
@@ -148,7 +166,7 @@ class Orchestrator:
         # answers one question rather than leaving the mic hot.
         self.state.addressed_by = None
 
-        await self._handle_turn(WAKE_WORD_RE.sub("", text.strip(), count=1).strip() or text)
+        await self._handle_turn(self._wake_word.sub("", text.strip(), count=1).strip() or text)
 
     async def _record_transcript(
         self, role: str, speaker_name: str, text: str, speaker_identity: str | None = None
@@ -232,7 +250,7 @@ class Orchestrator:
             # already went to the browser with every marker intact, so the
             # evidence chips are unaffected.
             spoken = for_speech(answer)
-            await self._record_transcript("agent", "Photon", spoken)
+            await self._record_transcript("agent", self.agent_name, spoken)
             await self.adapter.speak(spoken, language=language)
         else:
             log.warning("orchestrator.empty_answer", question=question, result=result)
@@ -257,7 +275,7 @@ class Orchestrator:
                                         "confidence": "high", "abstained": False, "escalation": None,
                                         "tool_trace": []}})
         if answer:
-            await self._record_transcript("agent", "Photon", answer)
+            await self._record_transcript("agent", self.agent_name, answer)
             await self.adapter.speak(answer, language=language)
 
     async def _ask_brain(

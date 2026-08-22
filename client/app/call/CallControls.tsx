@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
+import { useLocalParticipant, useParticipants, useRoomContext } from "@livekit/components-react";
 
 const POKE_TOPIC = "photon.poke";
 const POKE_WINDOW_SECONDS = 45;
@@ -113,8 +113,14 @@ export default function CallControls({
   onLeave: () => void;
 }) {
   const room = useRoomContext();
+  const participants = useParticipants(); // includes the local participant and the agent
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
     useLocalParticipant();
+
+  // A poke exists to say WHOSE microphone the agent should be on. With just
+  // one human and the agent there is nothing to disambiguate — LiveKit binds
+  // the session to the only human in the room — so the button is noise.
+  const needsPoke = participants.length > 2;
   const [menu, setMenu] = useState(false);
   const [pokeUntil, setPokeUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -171,18 +177,20 @@ export default function CallControls({
           <Icon name="share" />
         </Round>
 
-        <button
-          onClick={poke}
-          className="ml-1 rounded-full px-5 py-2.5 text-[11px] tracking-[0.18em] uppercase whitespace-nowrap transition-colors"
-          style={{
-            background: listening ? "rgba(180,83,9,.18)" : "#fffdf8",
-            color: listening ? "var(--l-terra)" : "#141413",
-            border: listening ? "1px solid rgba(180,83,9,.55)" : "1px solid transparent",
-          }}
-          title="The agent listens to you for the next 45 seconds"
-        >
-          {listening ? `Listening · ${remaining}s` : "Ask Photon"}
-        </button>
+        {needsPoke && (
+          <button
+            onClick={poke}
+            className="ml-1 rounded-full px-5 py-2.5 text-[11px] tracking-[0.18em] uppercase whitespace-nowrap transition-colors"
+            style={{
+              background: listening ? "rgba(180,83,9,.18)" : "#fffdf8",
+              color: listening ? "var(--l-terra)" : "#141413",
+              border: listening ? "1px solid rgba(180,83,9,.55)" : "1px solid transparent",
+            }}
+            title="The agent listens to you for the next 45 seconds"
+          >
+            {listening ? `Listening · ${remaining}s` : "Ask Photon"}
+          </button>
+        )}
 
         <button
           onClick={onToggleCaptions}

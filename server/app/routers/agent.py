@@ -48,6 +48,7 @@ async def _call_config(session, payload) -> dict:
         # workspace's auto-generated name ("rishik's workspace") is not a
         # company, so it is left unset rather than announced.
         "org_name": None if (workspace and workspace.is_personal) else (workspace.name if workspace else None),
+        "agent_name": workspace.agent_name if workspace else None,
     }
 
 router = APIRouter()
@@ -125,6 +126,7 @@ async def ask_stream(payload: AgentAskRequest, session: AsyncSession = Depends(g
                 allowed_tools=config.get("allowed_tools"),
                 bot_types=config.get("bot_types"),
                 org_name=config.get("org_name"),
+                agent_name=config.get("agent_name"),
             )
         except Exception as exc:  # noqa: BLE001 - report the failure to the client, don't hang it
             queue.put_nowait({"type": "turn.error", "t": 0, "seq": 0, "error": str(exc)})
@@ -171,6 +173,7 @@ async def ask(
         allowed_tools=config.get("allowed_tools"),
         bot_types=config.get("bot_types"),
         org_name=config.get("org_name"),
+        agent_name=config.get("agent_name"),
     )
 
     if not stream:

@@ -33,6 +33,7 @@ from app.models import (
     WorkspaceMemberRead,
     WorkspaceRead,
     WorkspaceRole,
+    WorkspaceUpdate,
 )
 
 router = APIRouter()
@@ -54,7 +55,8 @@ async def list_workspaces(
     )
     return [
         WorkspaceRead(
-            id=w.id, name=w.name, kind=w.kind, is_personal=w.is_personal, role=role,
+            id=w.id, name=w.name, kind=w.kind, agent_name=w.agent_name,
+            is_personal=w.is_personal, role=role,
             created_at=w.created_at,
         )
         for w, role in result.all()
@@ -67,7 +69,12 @@ async def create_workspace(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    workspace = Workspace(name=payload.name.strip(), kind=payload.kind, is_personal=False)
+    workspace = Workspace(
+        name=payload.name.strip(),
+        kind=payload.kind,
+        agent_name=(payload.agent_name or "").strip() or None,
+        is_personal=False,
+    )
     session.add(workspace)
     await session.flush()
     session.add(
@@ -79,6 +86,7 @@ async def create_workspace(
         id=workspace.id,
         name=workspace.name,
         kind=workspace.kind,
+        agent_name=workspace.agent_name,
         is_personal=workspace.is_personal,
         role=WorkspaceRole.OWNER,
         created_at=workspace.created_at,
@@ -98,6 +106,7 @@ async def current_workspace(
         id=workspace.id,
         name=workspace.name,
         kind=workspace.kind,
+        agent_name=workspace.agent_name,
         is_personal=workspace.is_personal,
         role=member.role if member else WorkspaceRole.OWNER,
         created_at=workspace.created_at,
@@ -352,3 +361,35 @@ async def _guard_last_owner(session: AsyncSession, workspace_id: str, user_id: s
         raise HTTPException(
             status_code=409, detail="This is the last owner — promote someone else first"
         )
+
+
+@router.patch("/settings", response_model=WorkspaceRead)
+async def update_workspace(
+    payload: WorkspaceUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.OWNER)),
+):
+    """Rename the workspace, or name its agent.
+
+    The agent's name is not decoration: it is what the agent calls itself
+    in every answer, what it announces on joining, and the wake word people
+    say out loud. "Ask Photon" is a stranger's name in someone else's
+    company.
+    """
+    if payload.name is not None and payload.name.strip():
+        workspace.name = payload.name.strip()
+    if payload.agent_name is not None:
+        # Empty string means "back to the default", which is different from
+        # not sending the field at all.
+        workspace.agent_name = payload.agent_name.strip()[:40] or None
+    session.add(workspace)
+    await session.commit()
+    await session.refresh(workspace)
+
+    member = await membership_for(session, workspace.id, current_user.id)
+    return WorkspaceRead(
+        id=workspace.id, name=workspace.name, kind=workspace.kind,
+        agent_name=workspace.agent_name, is_personal=workspace.is_personal,
+        role=member.role if member else WorkspaceRole.OWNER, created_at=workspace.created_at,
+    )

@@ -30,13 +30,13 @@ LANGUAGE_NAMES = {
 # fictional demo company — so every real workspace's agent introduced
 # itself as an employee of a company that does not exist, and described a
 # product nobody on the call had heard of.
-_IDENTITY_WITH_ORG = """You are Photon, {org}'s support agent, currently on a live call. You \
+_IDENTITY_WITH_ORG = """You are {agent}, {org}'s support agent, currently on a live call. You \
 answer questions by calling tools that search {org}'s own code, documents, chat history, \
 tickets and live customer state. You have NO knowledge of {org} beyond what these tools \
 return this turn.
 """
 
-_IDENTITY_GENERIC = """You are Photon, a support agent on a live call. You answer questions by \
+_IDENTITY_GENERIC = """You are {agent}, a support agent on a live call. You answer questions by \
 calling tools that search this company's own code, documents, chat history, tickets and live \
 customer state. You have NO knowledge of this company beyond what these tools return this \
 turn.
@@ -63,7 +63,10 @@ them mid-conversation.
 """
 
 
-def system_rules(org_name: str | None = None) -> str:
+DEFAULT_AGENT_NAME = "Photon"
+
+
+def system_rules(org_name: str | None = None, agent_name: str | None = None) -> str:
     """The non-negotiable rules, prefixed with who the agent is.
 
     `org_name` is the workspace's name. When it is unknown the agent stays
@@ -71,8 +74,13 @@ def system_rules(org_name: str | None = None) -> str:
     claims to work for the wrong company is worse than one that does not
     say.
     """
-    name = (org_name or "").strip()
-    identity = _IDENTITY_WITH_ORG.format(org=name) if name else _IDENTITY_GENERIC
+    org = (org_name or "").strip()
+    agent = (agent_name or "").strip() or DEFAULT_AGENT_NAME
+    identity = (
+        _IDENTITY_WITH_ORG.format(org=org, agent=agent)
+        if org
+        else _IDENTITY_GENERIC.format(agent=agent)
+    )
     return identity + _RULES
 
 _PLAN_PROMPT = """{system_rules}
@@ -253,6 +261,7 @@ def build_plan_prompt(
     known_repos: list[dict] | None = None,
     allowed_tools: set[str] | None = None,
     org_name: str | None = None,
+    agent_name: str | None = None,
 ) -> str:
     screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
     context_block = f"{context}\n" if context else ""
@@ -285,7 +294,7 @@ def build_plan_prompt(
     )
 
     return _PLAN_PROMPT.format(
-        system_rules=system_rules(org_name),
+        system_rules=system_rules(org_name, agent_name),
         tool_schemas=_format_schemas(allowed_tools),
         known_accounts=_format_accounts(),
         context_block=context_block,
@@ -319,6 +328,7 @@ def build_compose_prompt(
     language: str | None = None,
     persona_prompt: str | None = None,
     org_name: str | None = None,
+    agent_name: str | None = None,
 ) -> str:
     # No separate screen_context here on purpose: a screen-frame description
     # is folded into `evidence` as a citable ("screen" source_type) item by
@@ -327,7 +337,7 @@ def build_compose_prompt(
     # something it doesn't need to cite — same "no uncited claim" rule
     # applies to what's on screen as to everything else.
     prompt = _COMPOSE_PROMPT.format(
-        system_rules=system_rules(org_name),
+        system_rules=system_rules(org_name, agent_name),
         question=question,
         screen_context_block="",
         evidence_block=_format_evidence(evidence),

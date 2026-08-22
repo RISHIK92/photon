@@ -31,21 +31,42 @@ export default function AskPanel({
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {turns.length === 0 ? (
-          <div>
-            <p className="text-[14px] leading-relaxed l-t-2">
+          // Centred rather than pinned to the top: with nothing asked yet, a
+          // short block at the top of a full-height panel reads as a page
+          // that failed to load the rest of itself.
+          <div className="flex h-full flex-col justify-center">
+            <p className="text-[15px] leading-relaxed l-t-2">
               Ask anything grounded in what this workspace has read. Every claim comes back with
               a citation you can open, and it abstains rather than guessing.
             </p>
-            <p className="mt-6 text-[10px] tracking-[0.24em] uppercase l-t-muted">Try</p>
-            <div className="mt-3 space-y-2">
+
+            <div className="mt-10 flex items-center gap-3">
+              <span className="h-px w-6 shrink-0" style={{ background: "var(--l-rust)" }} />
+              <span className="text-[10px] tracking-[0.24em] whitespace-nowrap uppercase l-t-muted">
+                Try
+              </span>
+              <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
+            </div>
+
+            <div className="mt-1">
               {EXAMPLES.map((q) => (
                 <button
                   key={q}
                   onClick={() => onChange(q)}
-                  className="l-card block w-full p-3 text-left text-[13px] leading-snug"
-                  style={{ color: "var(--l-ink-2)" }}
+                  className="l-row group relative flex w-full items-baseline gap-3 border-b py-3.5 text-left"
+                  style={{ borderColor: "var(--l-rule)" }}
                 >
-                  {q}
+                  <span className="l-row-rule" style={{ background: "var(--l-rust)" }} />
+                  <span className="flex-1 text-[14px] leading-snug" style={{ color: "var(--l-ink-2)" }}>
+                    {q}
+                  </span>
+                  <span
+                    className="shrink-0 text-[13px] opacity-0 transition-opacity group-hover:opacity-100"
+                    style={{ color: "var(--l-rust)" }}
+                    aria-hidden
+                  >
+                    →
+                  </span>
                 </button>
               ))}
             </div>

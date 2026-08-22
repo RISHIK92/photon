@@ -80,6 +80,10 @@ class Workspace(SQLModel, table=True):
     id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str
     kind: WorkspaceKind = WorkspaceKind.INDIVIDUAL
+    # What the agent is called on this workspace's calls. Null means the
+    # product default. Worth having: people address it out loud, and "Ask
+    # Photon" is a stranger's name in someone else's company.
+    agent_name: Optional[str] = None
     # True for the workspace auto-created on signup, so the UI can label it
     # and never offer to delete a user's only home.
     is_personal: bool = False
@@ -153,12 +157,22 @@ class JoinRequestRead(SQLModel):
 class WorkspaceCreate(SQLModel):
     name: str
     kind: WorkspaceKind = WorkspaceKind.TEAM
+    agent_name: Optional[str] = None
+
+
+class WorkspaceUpdate(SQLModel):
+    name: Optional[str] = None
+    agent_name: Optional[str] = None
 
 
 class WorkspaceRead(SQLModel):
     id: str
     name: str
     kind: WorkspaceKind = WorkspaceKind.INDIVIDUAL
+    # What the agent is called on this workspace's calls. Null means the
+    # product default. Worth having: people address it out loud, and "Ask
+    # Photon" is a stranger's name in someone else's company.
+    agent_name: Optional[str] = None
     is_personal: bool
     role: WorkspaceRole
     created_at: datetime

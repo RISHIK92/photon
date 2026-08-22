@@ -350,6 +350,10 @@ async def call_config(slug: str, session: AsyncSession = Depends(get_session)):
         # company, so it stays unset and the agent introduces itself
         # without one rather than announcing something wrong.
         "org_name": None if (workspace and workspace.is_personal) else (workspace.name if workspace else None),
+        # The worker announces itself with this and listens for it as the
+        # wake word — people address the agent by name out loud, so the two
+        # have to be the same string.
+        "agent_name": (workspace.agent_name if workspace else None) or "Photon",
         "bot_types": meeting.bot_types or ["support"],
         "language_mode": meeting.language_mode or "english",
         # The mapping lives here rather than in the worker so "multilingual

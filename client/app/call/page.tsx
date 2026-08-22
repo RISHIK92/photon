@@ -91,6 +91,8 @@ export default function CallPage() {
   // The side panel is an overlay, so it has to be closable — the video is
   // the page, everything else is on demand.
   const [panel, setPanel] = useState<Tab | null>("ask");
+  // Reopening the drawer should return you to what you were reading.
+  const [lastTab, setLastTab] = useState<Tab>("ask");
   const [captionsOn, setCaptionsOn] = useState(true);
   const [copied, setCopied] = useState(false);
 
@@ -262,7 +264,10 @@ export default function CallPage() {
     connect();
   }, [autoJoin, meetingCode, connect]);
 
-  const openTab = useCallback((tab: Tab) => setPanel((prev) => (prev === tab ? null : tab)), []);
+  const openTab = useCallback((tab: Tab) => {
+    setLastTab(tab);
+    setPanel((prev) => (prev === tab ? null : tab));
+  }, []);
 
   const copyCode = useCallback(() => {
     navigator.clipboard?.writeText(meetingCode);
@@ -316,7 +321,7 @@ export default function CallPage() {
 
           <header
             className="flex shrink-0 items-center gap-4 border-b px-6 py-3"
-            style={{ borderColor: "var(--l-rule)" }}
+            style={{ borderColor: "var(--l-rule)", background: "var(--l-paper)" }}
           >
             <span
               className="text-[22px] leading-none italic"
@@ -333,21 +338,6 @@ export default function CallPage() {
               {copied ? "copied" : meetingCode}
             </button>
             <div className="flex-1" />
-            <div className="hidden items-center gap-1 md:flex">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => openTab(t.key)}
-                  className="rounded-full px-4 py-1.5 text-[11px] tracking-[0.18em] uppercase transition-colors"
-                  style={{
-                    background: panel === t.key ? "var(--l-ink)" : "transparent",
-                    color: panel === t.key ? "var(--l-paper)" : "var(--l-muted)",
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
           </header>
 
           <div className="flex min-h-0 flex-1">
@@ -364,6 +354,29 @@ export default function CallPage() {
                 onLeave={onDisconnected}
               />
               {signedIn && <WaitingRoom slug={meetingCode} />}
+              {panel === null && (
+                <button
+                  onClick={() => setPanel(lastTab)}
+                  className="absolute right-0 top-1/2 z-30 -translate-y-1/2 rounded-l-xl px-2.5 py-5"
+                  style={{
+                    background: "var(--l-paper)",
+                    border: "1px solid var(--l-rule)",
+                    borderRight: "none",
+                  }}
+                  aria-label="Open the panel"
+                >
+                  <span
+                    className="block text-[10px] tracking-[0.22em] uppercase"
+                    style={{
+                      writingMode: "vertical-rl",
+                      transform: "rotate(180deg)",
+                      color: "var(--l-muted)",
+                    }}
+                  >
+                    {TABS.find((t) => t.key === lastTab)?.label ?? "Ask"}
+                  </span>
+                </button>
+              )}
               <CaptionsBridge onCaption={onCaption} />
               <TraceBridge onEvent={onVoiceTraceEvent} />
             </div>
@@ -374,7 +387,7 @@ export default function CallPage() {
                 width: panel ? "min(30rem, 40vw)" : 0,
                 borderColor: panel ? "var(--l-rule)" : "transparent",
                 transitionTimingFunction: "cubic-bezier(.16,1,.3,1)",
-                background: "rgba(255,253,248,.72)",
+                background: "var(--l-paper)",
               }}
             >
               <div className="flex h-full w-[min(30rem,40vw)] flex-col">
@@ -386,7 +399,10 @@ export default function CallPage() {
                     (t) => (
                       <button
                         key={t.key}
-                        onClick={() => setPanel(t.key)}
+                        onClick={() => {
+                          setLastTab(t.key);
+                          setPanel(t.key);
+                        }}
                         className="rounded-full px-3.5 py-1.5 text-[11px] tracking-[0.16em] uppercase transition-colors"
                         style={{
                           background: panel === t.key ? "rgba(28,25,23,.06)" : "transparent",

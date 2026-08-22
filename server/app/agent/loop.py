@@ -212,6 +212,7 @@ async def answer_question(
     allowed_tools: set[str] | None = None,
     bot_types: list[str] | None = None,
     org_name: str | None = None,
+    agent_name: str | None = None,
 ) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
     escalation, tool_trace}. Safe to call with no call/session in progress.
@@ -296,6 +297,7 @@ async def answer_question(
             # muddies the trace. org_name is who the agent says it is.
             allowed_tools=allowed_tools,
             org_name=org_name,
+            agent_name=agent_name,
         )
         tracer.emit("plan.start", round=round_num + 1)
         plan_started = time.monotonic()
@@ -408,6 +410,7 @@ async def answer_question(
         language=language,
         persona_prompt=personas_prompt(bot_types),
         org_name=org_name,
+        agent_name=agent_name,
     )
     tracer.emit("compose.start", evidence_count=len(compose_evidence), language=language or "en-IN")
     compose_started = time.monotonic()

@@ -46,18 +46,23 @@ SARVAM_STT_LANGUAGE = os.environ.get("SARVAM_STT_LANGUAGE", "unknown")
 # call's own workspace when there is one; it used to name the fictional demo
 # company on every real call.
 ANNOUNCEMENT_TEMPLATE = (
-    "Hi, I'm {org}'s support agent. I'm listening and taking notes — "
+    "Hi, I'm {agent}, {org}'s support agent. I'm listening and taking notes — "
     "let me know if you'd like me off."
 )
 ANNOUNCEMENT_GENERIC = (
-    "Hi, I'm your support agent. I'm listening and taking notes — "
+    "Hi, I'm {agent}. I'm listening and taking notes — "
     "let me know if you'd like me off."
 )
 
 
-def announcement_for(org_name: str | None) -> str:
-    name = (org_name or "").strip()
-    return ANNOUNCEMENT_TEMPLATE.format(org=name) if name else ANNOUNCEMENT_GENERIC
+def announcement_for(org_name: str | None, agent_name: str | None = None) -> str:
+    org = (org_name or "").strip()
+    agent = (agent_name or "").strip() or "Photon"
+    return (
+        ANNOUNCEMENT_TEMPLATE.format(org=org, agent=agent)
+        if org
+        else ANNOUNCEMENT_GENERIC.format(agent=agent)
+    )
 
 # Topic the browser filters on (client/app/call/TraceBridge.tsx) so trace
 # events never get confused with chat or any other data traffic.
@@ -107,6 +112,7 @@ class LiveKitAdapter:
         callbacks: SessionCallbacks,
         voice_stack: str | None = None,
         org_name: str | None = None,
+        agent_name: str | None = None,
     ):
         self._ctx = ctx
         self._callbacks = callbacks
@@ -116,6 +122,7 @@ class LiveKitAdapter:
         self._tts_language: str | None = None
         self._voice_stack = (voice_stack or VOICE_STACK).strip().lower()
         self._org_name = org_name
+        self._agent_name = agent_name
 
     def _build_stt(self):
         if self._voice_stack == "sarvam":
@@ -167,7 +174,7 @@ class LiveKitAdapter:
             room=self._ctx.room,
             room_input_options=agents.RoomInputOptions(video_enabled=True),
         )
-        await self.announce(announcement_for(self._org_name))
+        await self.announce(announcement_for(self._org_name, self._agent_name))
 
     def _current_speaker_id(self) -> str:
         """Identity of the participant the session is actually listening to.

@@ -89,6 +89,9 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS kind VARCHAR NOT NULL DEFAULT 'INDIVIDUAL'"
         ))
+        await conn.execute(text(
+            "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS agent_name VARCHAR"
+        ))
         # GitHub App support: OAuth login linking (users.github_id/login,
         # password now optional) and per-repo installation tagging (for the
         # picker's already-imported diff and installation-token cloning).
