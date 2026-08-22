@@ -281,11 +281,15 @@ async def call_options(
     groups = await source_groups(session, workspace.id)
     return {
         "bot_types": persona_catalog(),
+        # Described by what the caller gets, not by which vendor provides
+        # it. Whoever picks this is choosing how the call should sound and
+        # which languages it must handle; the supplier behind that is an
+        # implementation detail that can change without the choice changing.
         "language_modes": [
             {"key": "english", "label": "English only",
-             "detail": "Deepgram — lower latency, English voices"},
+             "detail": "Fastest replies. English voices."},
             {"key": "multilingual", "label": "Multilingual",
-             "detail": "Sarvam — Telugu, Tamil, Hindi and English"},
+             "detail": "Telugu, Tamil, Hindi and English. Slightly slower to speak."},
         ],
         "sources": [
             {

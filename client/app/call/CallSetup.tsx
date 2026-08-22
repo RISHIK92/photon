@@ -171,7 +171,7 @@ export default function CallSetup({
         <button
           onClick={() => onStart({ bot_types: botTypes, language_mode: language, enabled_sources: sources })}
           disabled={busy || botTypes.length === 0 || nothingConnected}
-          className="bg-[color:var(--l-ink)] hover:bg-[color:var(--l-rust)] disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
+          className="l-btn"
         >
           {busy ? "Starting…" : "Start call"}
         </button>

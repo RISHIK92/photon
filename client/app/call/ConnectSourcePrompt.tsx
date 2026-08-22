@@ -36,7 +36,7 @@ export default function ConnectSourcePrompt({
         <div className="flex items-center gap-3 mt-4">
           <button
             onClick={onAccept}
-            className="bg-[color:var(--l-ink)] hover:bg-[color:var(--l-rust)] rounded px-4 py-2 text-sm font-medium"
+            className="l-btn"
           >
             Connect now
           </button>
