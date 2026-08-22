@@ -110,7 +110,15 @@ async def answer_question(question: str, repo_id: str | None = None, screen_cont
         for o in outcomes:
             r = o["result"]
             all_evidence.extend(r.get("evidence", []))
-            tool_trace.append({"tool": o["tool"], "args": o["args"], "ms": o["ms"]})
+            # Evidence rides along on each trace entry (not a new top-level
+            # answer key — Section 4's answer contract is fixed) so the
+            # evidence panel (Phase 5) can build an ev_id -> evidence map for
+            # every [ev_xxx] citation chip and render a real provenance
+            # strip, instead of citations pointing at nothing once the
+            # tool's raw result is discarded after composition.
+            tool_trace.append(
+                {"tool": o["tool"], "args": o["args"], "ms": o["ms"], "evidence": r.get("evidence", [])}
+            )
             round_lines.append(
                 f"{o['tool']}({o['args']}) -> status={r.get('status')} "
                 f"evidence_count={len(r.get('evidence', []))} note={r.get('note')}"

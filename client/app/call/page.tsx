@@ -10,12 +10,14 @@ import {
   RemoteParticipant,
   LocalParticipant,
 } from "livekit-client";
+import { AgentAnswer } from "@/lib/evidence";
+import EvidencePanel from "./EvidencePanel";
+import AccountSummary from "./AccountSummary";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
 type ConnState = "idle" | "connecting" | "connected" | "error";
-
-type TextTurn = { role: "user" | "agent"; text: string; abstained?: boolean };
+type Turn = { role: "user" | "agent"; question?: string; result?: AgentAnswer };
 
 export default function CallPage() {
   const [identity, setIdentity] = useState("");
@@ -24,7 +26,7 @@ export default function CallPage() {
   const [micOn, setMicOn] = useState(false);
   const [screenOn, setScreenOn] = useState(false);
   const [captions, setCaptions] = useState<string[]>([]);
-  const [textTurns, setTextTurns] = useState<TextTurn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [textInput, setTextInput] = useState("");
   const [textBusy, setTextBusy] = useState(false);
 
@@ -53,7 +55,7 @@ export default function CallPage() {
 
       room.on(
         RoomEvent.TrackSubscribed,
-        (track: RemoteTrack, _pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+        (track: RemoteTrack, _pub: RemoteTrackPublication, _participant: RemoteParticipant) => {
           if (track.kind === Track.Kind.Audio) {
             const el = track.attach();
             audioContainerRef.current?.appendChild(el);
@@ -108,7 +110,7 @@ export default function CallPage() {
     const question = textInput.trim();
     if (!question || textBusy) return;
     setTextInput("");
-    setTextTurns((prev) => [...prev, { role: "user", text: question }]);
+    setTurns((prev) => [...prev, { role: "user", question }, { role: "agent" }]);
     setTextBusy(true);
     try {
       const res = await fetch(`${BRAIN_API_URL}/api/agent/ask`, {
@@ -116,16 +118,28 @@ export default function CallPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const result = await res.json();
-      setTextTurns((prev) => [
-        ...prev,
-        { role: "agent", text: result.answer || "(no answer)", abstained: result.abstained },
-      ]);
+      const result: AgentAnswer = await res.json();
+      setTurns((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { role: "agent", result };
+        return next;
+      });
     } catch (e) {
-      setTextTurns((prev) => [
-        ...prev,
-        { role: "agent", text: `Error reaching the agent: ${e instanceof Error ? e.message : String(e)}` },
-      ]);
+      setTurns((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = {
+          role: "agent",
+          result: {
+            answer: `Error reaching the agent: ${e instanceof Error ? e.message : String(e)}`,
+            claims: [],
+            confidence: "low",
+            abstained: true,
+            escalation: null,
+            tool_trace: [],
+          },
+        };
+        return next;
+      });
     } finally {
       setTextBusy(false);
     }
@@ -138,17 +152,17 @@ export default function CallPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col">
-      <header className="border-b border-neutral-800 px-6 py-4">
+    <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
+      <header className="border-b border-neutral-800 px-6 py-4 shrink-0">
         <h1 className="text-lg font-semibold">Meridian support call</h1>
         <p className="text-sm text-neutral-400">
           Talk to Photon, Meridian&apos;s support agent — say &quot;Photon&quot; to get its
-          attention, or use the text box below if audio isn&apos;t working.
+          attention, or use the text box on the right if audio isn&apos;t working.
         </p>
       </header>
 
-      <main className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
-        <section className="flex flex-col gap-4">
+      <main className="flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-6 p-6 min-h-0 overflow-hidden">
+        <section className="flex flex-col gap-4 overflow-y-auto">
           {state !== "connected" ? (
             <div className="flex flex-col gap-3 max-w-sm">
               <input
@@ -206,26 +220,19 @@ export default function CallPage() {
           )}
 
           <div ref={audioContainerRef} className="hidden" />
+
+          {/* Note: this evidence panel currently only reflects the text-input
+              path below. The voice path (call-agent's orchestrator) speaks
+              its answer via TTS but doesn't yet broadcast the structured
+              result back to the browser — see CLAUDE.md Phase 5. */}
         </section>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium text-neutral-400">
-            Text fallback (works even if audio is disabled)
-          </h2>
-          <div className="flex-1 bg-neutral-900 border border-neutral-800 rounded p-3 overflow-y-auto space-y-3 min-h-[300px]">
-            {textTurns.map((t, i) => (
-              <div key={i} className={t.role === "user" ? "text-neutral-200" : "text-indigo-300"}>
-                <span className="text-xs uppercase tracking-wide text-neutral-500 mr-2">
-                  {t.role}
-                </span>
-                {t.text}
-                {t.abstained && (
-                  <span className="ml-2 text-xs text-amber-400">(abstained)</span>
-                )}
-              </div>
-            ))}
+        <section className="flex flex-col min-h-0 h-full bg-neutral-900/30 border border-neutral-800 rounded-lg p-4">
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {turns.length === 0 ? <AccountSummary /> : <EvidencePanel turns={turns} />}
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex gap-2 mt-4 pt-4 border-t border-neutral-800 shrink-0">
             <input
               className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
               placeholder="Ask a question…"

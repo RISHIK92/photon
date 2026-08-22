@@ -38,11 +38,76 @@ dedicated OpenRouter tier or a different model, not more retry tuning.
 
 ## Current phase
 
-**Phase 4 — Live call transport.** Phase 0 (environment) is complete —
-the manual two-person LiveKit test from its checklist is superseded by
-the Phase 4 live verification below (worker joined a real room, real
-Deepgram STT/TTS). Phases 1-3 are complete — see their sections below.
-Phase 4 status below.
+**Phase 5 — Evidence panel.** Phase 0 (environment) is complete — the
+manual two-person LiveKit test from its checklist is superseded by the
+Phase 4 live verification (worker joined a real room, real Deepgram
+STT/TTS). Phases 1-4 are complete — see their sections below. Phase 5
+status below.
+
+### Phase 5 — evidence panel (done)
+
+The plan's Section 11 says to adapt `QueryPanel.tsx`/`CodeViewer.tsx` from
+`apps/console` — but per the Phase 0 scoping decision, this repo's
+`client/` was never seeded with YASML's original frontend (no `apps/console`
+equivalent exists here), so this was built fresh, integrated directly into
+`client/app/call/page.tsx` rather than ported from a component that
+doesn't exist in this repo.
+
+**The real gap this phase had to close first**: `POST /api/agent/ask`'s
+Section 4 answer contract only carries `claims[].evidence_ids` and
+`tool_trace` (tool/args/ms) — the actual evidence items (locator, snippet,
+score) aren't in the response at all once composition discards the raw
+tool results. Without them there's nothing for a panel to render. Fixed
+in `server/app/agent/loop.py`: each `tool_trace` entry now also carries
+its own `evidence: [...]` array — enriches an existing key rather than
+adding a new top-level one, so the fixed 6-key answer contract is intact.
+
+- `client/lib/evidence.ts` — shared types + `buildEvidenceMap()` (flattens
+  every tool_trace entry's evidence into one `ev_id -> Evidence` lookup —
+  the only place a citation chip's data comes from) + `findProvenanceChain()`
+  (pulls `explain_why`'s evidence array as-is, since `provenance.py`
+  already builds it in exact hop order: code → commit → pr → slack...).
+- `client/app/call/EvidencePanel.tsx` — renders each turn's answer with
+  `[ev_xxx]` markers replaced by clickable source-type-icon chips
+  (clicking scrolls to and briefly highlights the matching evidence card,
+  via a ref map + `scrollIntoView`); confidence/abstained/escalation
+  badges; tool-trace pills (`tool · Nms`); the provenance strip (rendered
+  only when an `explain_why` call produced >1 evidence item, connected
+  hop-to-hop with arrows); and the evidence card grid (source icon,
+  locator, snippet, score).
+- `client/app/call/AccountSummary.tsx` — the idle state: calls
+  `POST /api/tools/list_accounts` directly and renders all 3 known
+  accounts as cards. (Simpler than the plan's "account summary for
+  whoever's on the call" — there's no real caller-to-account identity
+  mapping in this build, so it shows all known accounts rather than
+  picking one.)
+- `client/app/call/page.tsx` — restructured to a bounded two-pane layout
+  (call controls left, evidence panel right, each independently
+  scrollable) so the panel doesn't just grow the whole page.
+
+**Live-verified in a real browser** (Chrome via the `claude-in-chrome`
+tools), not just compiled: idle state shows real account data fetched
+live from the brain-api; a submitted question shows a real "thinking…"
+state; a real S2 question ("why does pricing have a special case for
+Bangalore?") first hit the already-documented DeepSeek compose-JSON-parse
+flakiness (correctly rendered as `confidence: low` / `abstained` with 20
+real evidence cards, not a UI crash), then on retry produced a fully
+grounded high-confidence answer with a working `code → commit` provenance
+strip and real evidence cards pulled straight from the corpus (actual
+Slack messages from Dev Sharma/Priya Nair/Alex Rao in `#pricing`, correct
+locators/scores). Multi-turn stacking (asking a second question) also
+confirmed working.
+
+**Known gap, honestly**: this evidence panel only reflects the
+text-input path. The voice path (`call-agent/orchestrator.py`) gets the
+same `AgentAnswer` from the brain-api and speaks it via TTS, but doesn't
+yet broadcast the structured result back into the room for the browser to
+render — building that (LiveKit data-channel publish from the adapter,
+`TransportAdapter` doesn't currently have a 4th method for it) is real
+additional plumbing beyond "evidence panel" itself, and the plan's own
+cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
+not load-bearing"). Noting it here rather than silently leaving the
+question unaddressed.
 
 ### Phase 4 — live call transport (done)
 
