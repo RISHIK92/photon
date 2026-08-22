@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from app.tools.code import find_usages, read_file, search_code, trace_symbol
 from app.tools.conflict import check_conflict
-from app.tools.knowledge import search_docs, search_slack, search_tickets
+from app.tools.knowledge import search_docs, search_jira, search_slack, search_tickets
 from app.tools.provenance import explain_why
 from app.tools.tenant import get_account_logs_tool, get_account_tool, get_incidents_tool, list_accounts_tool
 
@@ -66,6 +66,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "query": {"type": "string", "required": True},
             "account_id": {"type": "string", "required": False},
             "top_k": {"type": "integer", "required": False, "default": 6},
+        },
+    },
+    {
+        "name": "search_jira",
+        "description": (
+            "Search connected Jira issues — whether something is a known bug, its status, "
+            "and who owns it. Use for 'is this a known issue', 'is there a ticket for', "
+            "'what's the status of'. Returns nothing if the workspace has no Jira connected."
+        ),
+        "parameters": {
+            "query": {"type": "string", "required": True},
+            "project_key": {"type": "string", "required": False},
+            "top_k": {"type": "integer", "required": False, "default": 8},
         },
     },
     {
@@ -137,6 +150,7 @@ _DISPATCH: dict[str, ToolFn] = {
     "search_docs": search_docs,
     "search_tickets": search_tickets,
     "search_slack": search_slack,
+    "search_jira": search_jira,
     "get_account": get_account_tool,
     "list_accounts": list_accounts_tool,
     "get_account_logs": get_account_logs_tool,

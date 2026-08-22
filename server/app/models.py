@@ -209,6 +209,59 @@ class SlackInstallationRead(SQLModel):
     last_synced_at: Optional[datetime]
 
 
+# ─── Jira ─────────────────────────────────────────────────────────────────
+
+
+class JiraConnection(SQLModel, table=True):
+    """A connected Jira site.
+
+    Authenticated with an API token rather than OAuth 3LO, deliberately:
+    Atlassian's OAuth needs a registered app with an HTTPS callback, which
+    is the same wall Slack hit. An API token is created by any user from
+    their own Atlassian account in under a minute and works on localhost —
+    and it carries exactly that user's permissions, so it cannot see more
+    of Jira than the person who created it can.
+    """
+    __tablename__ = "jira_connections"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    scope: ConnectionScope = ConnectionScope.WORKSPACE
+    owner_user_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    # e.g. https://acme.atlassian.net
+    site_url: str
+    # The Atlassian account the token belongs to; also the Basic-auth user.
+    account_email: str
+    api_token_encrypted: str
+    display_name: Optional[str] = None
+    connected_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_synced_at: Optional[datetime] = None
+
+
+class JiraProject(SQLModel, table=True):
+    """A project chosen for indexing. Explicit, like Slack channels: a Jira
+    site can hold dozens of projects that have nothing to do with support."""
+    __tablename__ = "jira_projects"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    connection_id: str = Field(sa_column=Column(String, ForeignKey("jira_connections.id", ondelete="CASCADE"), nullable=False, index=True))
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    project_key: str
+    name: str
+    selected: bool = True
+    issue_count: int = 0
+    last_synced_at: Optional[datetime] = None
+
+
+class JiraConnectionRead(SQLModel):
+    id: str
+    site_url: str
+    account_email: str
+    display_name: Optional[str]
+    scope: ConnectionScope
+    created_at: datetime
+    last_synced_at: Optional[datetime]
+
+
 # ─── Meetings ─────────────────────────────────────────────────────────────
 
 

@@ -149,6 +149,37 @@ derives access from the App's PERMISSIONS, not from OAuth scopes, so
 `scope=user:email` in the authorize URL buys nothing and the call fails
 for any user with a private email — which is the GitHub default.
 
+## Jira — connected by API token, not OAuth
+
+Same wall as Slack's public distribution: Atlassian's OAuth 3LO needs a
+registered app with an HTTPS callback. An **API token** is created by any
+user from their own Atlassian account in a minute, works on localhost, and
+carries exactly that user's permissions — so the connection can never see
+more of Jira than the person who made it.
+
+- `POST /api/integrations/jira` verifies credentials against
+  `/rest/api/3/myself` **before storing them**: an unverified token fails
+  later, in a background sync, where nobody is watching. Token is Fernet-
+  encrypted like Slack's.
+- Projects are chosen explicitly — a Jira site holds plenty of projects
+  that have nothing to do with support.
+- Sync is incremental via JQL `updated >= …`; point ids are
+  `uuid5(workspace:issue_key)` so an updated ticket REPLACES its old copy
+  rather than leaving a stale one the agent could still cite.
+- Descriptions and comments arrive as Atlassian Document Format (a nested
+  node tree, not text); `_plain_text()` walks it for the text nodes.
+- Only summary/description/status/assignee/comments are indexed. A Jira
+  issue carries a lot of workflow metadata nobody asks support questions
+  about, and embedding it dilutes the text that matters.
+
+**`search_jira` has NO seed fallback**, deliberately unlike `search_slack`:
+the demo corpus already exposes `tickets.jsonl` through `search_tickets`,
+so a fallback here would serve fixture data under a Jira label and make it
+impossible to tell whether a real connection works. A workspace with no
+Jira gets a clear "nothing connected" note instead.
+
+14 tools registered; eval unaffected (15-16/16, within the known variance).
+
 ## Slack — the first connector where the tools stop being fixtures
 
 Built first among the connectors because the S2 demo scenario depends on

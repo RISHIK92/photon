@@ -115,3 +115,45 @@ def _real_slack_to_evidence(hit: dict) -> dict:
         f"{user}: {hit.get('text', '')}",
         float(hit.get("score") or 0.0),
     )
+
+
+async def search_jira(
+    query: str, project_key: str | None = None, top_k: int = 8, workspace_id: str | None = None
+) -> dict:
+    """Search connected Jira issues.
+
+    No seed-corpus fallback, unlike search_slack: the demo corpus has
+    tickets.jsonl behind `search_tickets`, so a fallback here would return
+    fixture data under a Jira label and make it impossible to tell whether a
+    real connection is working. A workspace with no Jira gets a clear
+    "nothing connected" instead.
+    """
+    if not workspace_id:
+        return tool_result("search_jira", [], note="no Jira connection for this workspace")
+    try:
+        from app.services import jira_sync
+
+        loop = asyncio.get_event_loop()
+        if not await loop.run_in_executor(None, jira_sync.has_data, workspace_id):
+            return tool_result("search_jira", [], note="no Jira issues indexed for this workspace yet")
+        hits = await loop.run_in_executor(
+            None, lambda: jira_sync.search(workspace_id, query, project_key, top_k)
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("tool.search_jira_error", error=str(exc))
+        return tool_error("search_jira", f"search_jira failed: {exc}")
+
+    evidence = [
+        make_evidence(
+            "ticket",
+            # The issue key IS the locator people recognise, and the URL
+            # rides along in the snippet so an answer can be followed up.
+            f"jira:{h.get('issue_key')}",
+            f"[{h.get('status')}] {h.get('summary')} — {h.get('text', '')[:600]}",
+            float(h.get("score") or 0.0),
+        )
+        for h in hits
+    ]
+    return tool_result(
+        "search_jira", evidence, note=None if evidence else f"no Jira issues matched '{query}'"
+    )

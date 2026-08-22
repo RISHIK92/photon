@@ -17,6 +17,7 @@ from app.routers import tools
 from app.routers import agent
 from app.routers import github_app
 from app.routers import slack as slack_router
+from app.routers import jira as jira_router
 from app.routers import dev_github_setup
 from app.routers import dev_slack_setup
 
@@ -123,6 +124,7 @@ app.include_router(tools.router,        prefix="/api/tools",       tags=["tools"
 app.include_router(agent.router,        prefix="/api/agent",       tags=["agent"])  # unauthenticated for the demo, see CLAUDE.md
 app.include_router(github_app.router,   prefix="/api/integrations/github", tags=["github"])
 app.include_router(slack_router.router, prefix="/api/integrations/slack",  tags=["slack"])
+app.include_router(jira_router.router,  prefix="/api/integrations/jira",   tags=["jira"])
 
 # Dev-only GitHub App manifest bootstrap — never linked from product UI,
 # not mounted in production. See app/routers/dev_github_setup.py.
