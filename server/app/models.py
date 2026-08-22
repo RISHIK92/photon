@@ -274,6 +274,33 @@ class ConnectorProvider(str, Enum):
     LINEAR = "linear"
     NOTION = "notion"
     DATADOG = "datadog"
+    # Not a vendor: documents the customer uploads directly (business flows,
+    # runbooks, operations notes). Stored and searched through exactly the
+    # same path as a connector, so it needs no separate retrieval code.
+    CUSTOM_DOCS = "custom_docs"
+
+
+class CustomDoc(SQLModel, table=True):
+    """A document uploaded for context — the things that live in a Google
+    Doc or someone's head rather than in a repo or a ticket."""
+    __tablename__ = "custom_docs"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    title: str
+    filename: Optional[str] = None
+    size_bytes: int = 0
+    chunk_count: int = 0
+    uploaded_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CustomDocRead(SQLModel):
+    id: str
+    title: str
+    filename: Optional[str]
+    size_bytes: int
+    chunk_count: int
+    created_at: datetime
 
 
 class ExternalConnection(SQLModel, table=True):

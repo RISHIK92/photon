@@ -204,3 +204,9 @@ async def search_notion(query: str, top_k: int = 8, workspace_id: str | None = N
 
 async def search_datadog(query: str, top_k: int = 8, workspace_id: str | None = None) -> dict:
     return await _search_connector("datadog", "search_datadog", query, top_k, workspace_id)
+
+
+async def search_custom_docs(query: str, top_k: int = 8, workspace_id: str | None = None) -> dict:
+    """Search documents the workspace uploaded — business flows, runbooks,
+    escalation policies. The "what is our process for this" source."""
+    return await _search_connector("custom_docs", "search_custom_docs", query, top_k, workspace_id)

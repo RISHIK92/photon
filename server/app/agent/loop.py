@@ -33,7 +33,24 @@ _REPO_ID_TOOLS = {t["name"] for t in TOOL_SCHEMAS if "repo_id" in t["parameters"
 # deliberately absent from the schema the planner sees: it is not a choice
 # the model should be able to make, and a hallucinated workspace id would be
 # a cross-tenant read rather than a merely wrong answer.
-_WORKSPACE_ID_TOOLS = {"search_slack", "search_jira", "search_linear", "search_notion", "search_datadog"}
+# Two different things, easy to confuse (they were, once — a merge left the
+# connector injection unreachable and search_custom_docs silently returned
+# "no connection" for a workspace that had documents indexed):
+#
+#   _WORKSPACE_ID_TOOLS       connector-backed tools that read TENANT data
+#                             and are meaningless without a workspace.
+#   _WORKSPACE_SEARCHABLE_TOOLS  repo tools that can search across all of a
+#                             workspace's repos when no single repo was
+#                             resolved (defined below, used inside the
+#                             repo_id branch).
+_WORKSPACE_ID_TOOLS = {
+    "search_slack",
+    "search_jira",
+    "search_linear",
+    "search_notion",
+    "search_datadog",
+    "search_custom_docs",
+}
 # The only tools that can fall back to searching every repo in a workspace
 # at once (plain vector search, filterable by workspace_id) rather than
 # needing one specific repo (a Neo4j graph walk, a per-repo provenance
@@ -73,6 +90,13 @@ async def _run_one_call(
                 args.pop("repo_id", None)
             if workspace_id and tool_name in _WORKSPACE_SEARCHABLE_TOOLS:
                 args["workspace_id"] = workspace_id
+
+    if tool_name in _WORKSPACE_ID_TOOLS:
+        # Always overwrite, never default: a planner-supplied value here
+        # would be a tenant boundary decided by an LLM. Deliberately outside
+        # the repo_id branch above — connector tools have nothing to do with
+        # repos, and nesting this under it is exactly how it went missing.
+        args["workspace_id"] = workspace_id
 
     # Emitted BEFORE the await, so a client sees "search_code running…"
     # for the whole time it actually runs rather than only learning about

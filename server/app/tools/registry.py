@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 from app.tools.code import find_usages, read_file, search_code, trace_symbol
 from app.tools.conflict import check_conflict
 from app.tools.knowledge import (
+    search_custom_docs,
     search_datadog,
     search_docs,
     search_jira,
@@ -88,6 +89,16 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "project_key": {"type": "string", "required": False},
             "top_k": {"type": "integer", "required": False, "default": 8},
         },
+    },
+    {
+        "name": "search_custom_docs",
+        "description": (
+            "Search documents this workspace uploaded — business flows, operations notes, "
+            "escalation policies. Use for 'what is our process for', 'who approves', "
+            "'what are we supposed to do when'."
+        ),
+        "parameters": {"query": {"type": "string", "required": True},
+                        "top_k": {"type": "integer", "required": False, "default": 8}},
     },
     {
         "name": "search_linear",
@@ -187,6 +198,7 @@ _DISPATCH: dict[str, ToolFn] = {
     "search_tickets": search_tickets,
     "search_slack": search_slack,
     "search_jira": search_jira,
+    "search_custom_docs": search_custom_docs,
     "search_linear": search_linear,
     "search_notion": search_notion,
     "search_datadog": search_datadog,
