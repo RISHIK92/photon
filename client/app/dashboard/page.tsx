@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
 import ConnectGithubDialog from "./ConnectGithubDialog";
@@ -32,6 +33,7 @@ import {
 // is exactly what happened the first time.
 const ACTIVE = new Set(["pending", "ingesting"]);
 const isActive = (status: string) => ACTIVE.has(status.toLowerCase());
+const isReady = (status: string) => status.toLowerCase() === "ready";
 
 export default function DashboardPage() {
   return (
@@ -69,6 +71,14 @@ function Dashboard() {
   const [ghSelected, setGhSelected] = useState<Set<number>>(new Set());
   const [ghBusy, setGhBusy] = useState(false);
   const [ghError, setGhError] = useState<string | null>(null);
+  // Presentation state: the workspace menu, the inline "new workspace" form
+  // (a window.prompt is both ugly and unstyleable), the collapsed URL field,
+  // and which repo is one click from being removed.
+  const [wsMenu, setWsMenu] = useState(false);
+  const [newWs, setNewWs] = useState<string | null>(null);
+  const [showUrlField, setShowUrlField] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const newWsRef = useRef<HTMLInputElement>(null);
 
   const refreshRepos = useCallback(async () => {
     try {
@@ -133,8 +143,10 @@ function Dashboard() {
   useEffect(() => {
     const chosen = ghRepos.filter((r) => ghSelected.has(r.id) && !r.already_imported);
     if (chosen.length === 0) {
-      setGhEstimate(null);
-      return;
+      // Clearing goes through the same timer as setting, so neither path
+      // updates state synchronously from the effect body.
+      const clear = setTimeout(() => setGhEstimate(null), 0);
+      return () => clearTimeout(clear);
     }
     const handle = setTimeout(() => {
       estimateIngest({ size_kb: chosen.map((r) => r.size_kb) })
@@ -149,13 +161,19 @@ function Dashboard() {
   useEffect(() => {
     const source = searchParams.get("connect");
     const back = searchParams.get("return");
-    if (back) setReturnTo(back);
-    if (source) {
-      // GitHub has its own pre-flight dialog; everything else uses the
-      // generic connect modal.
-      if (source === "github") setShowConnectDialog(true);
-      else setConnectSource(source);
-    }
+    // Deferred a frame rather than set straight from the effect body: these
+    // open a dialog, so a cascading render on mount is exactly what we do
+    // not want, and one frame is imperceptible for a modal.
+    const id = requestAnimationFrame(() => {
+      if (back) setReturnTo(back);
+      if (source) {
+        // GitHub has its own pre-flight dialog; everything else uses the
+        // generic connect modal.
+        if (source === "github") setShowConnectDialog(true);
+        else setConnectSource(source);
+      }
+    });
+    return () => cancelAnimationFrame(id);
   }, [searchParams]);
 
   // GitHub redirects back here after an installation with ?installation=connected
@@ -218,15 +236,17 @@ function Dashboard() {
     setWorkspaceId(id);
     setCurrent(id);
     setRepos([]);
+    setWsMenu(false);
     await refreshRepos();
   };
 
   const addWorkspace = async () => {
-    const name = prompt("Workspace name");
-    if (!name?.trim()) return;
+    const name = newWs?.trim();
+    if (!name) return;
     try {
-      const ws = await createWorkspace(name.trim());
+      const ws = await createWorkspace(name);
       setWorkspaces((prev) => [...prev, ws]);
+      setNewWs(null);
       await switchWorkspace(ws.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -243,6 +263,7 @@ function Dashboard() {
       const name = source.replace(/\.git$/, "").split("/").slice(-2).join("/");
       await connectRepo(name, source);
       setUrl("");
+      setShowUrlField(false);
       await refreshRepos();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -251,8 +272,13 @@ function Dashboard() {
     }
   };
 
+  const ready = repos.filter((r) => isReady(r.status));
+  const indexing = repos.filter((r) => isActive(r.status));
+  const workspace = workspaces.find((w) => w.id === current);
+  const firstRun = repos.length === 0 && ghInstallCount === 0;
+
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+    <div className="l-landing min-h-screen">
       {connectSource && (
         <ConnectSourceModal
           sourceKey={connectSource}
@@ -270,39 +296,223 @@ function Dashboard() {
           onConfirm={connectGithub}
         />
       )}
-      <header className="border-b border-neutral-800 px-6 py-3 flex items-center gap-4">
-        <span className="font-semibold">Photon</span>
-        <select
-          value={current ?? ""}
-          onChange={(e) => switchWorkspace(e.target.value)}
-          className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm"
-        >
-          {workspaces.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-              {w.is_personal ? " (personal)" : ""}
-            </option>
-          ))}
-        </select>
-        <button onClick={addWorkspace} className="text-sm text-neutral-400 hover:text-neutral-100">
-          + workspace
-        </button>
-        <div className="flex-1" />
-        <a href="/call" className="text-sm text-indigo-400 hover:text-indigo-300">
-          Open call
-        </a>
-        <button
-          onClick={() => {
-            logout();
-            router.replace("/login");
-          }}
-          className="text-sm text-neutral-400 hover:text-neutral-100"
-        >
-          Sign out
-        </button>
+
+      <header
+        className="sticky top-0 z-30 border-b px-6 py-4 backdrop-blur-xl md:px-10"
+        style={{ borderColor: "var(--l-rule)", background: "rgba(255,253,248,.82)" }}
+      >
+        <div className="mx-auto flex max-w-5xl items-center gap-5">
+          <Link
+            href="/"
+            className="text-[24px] leading-none italic"
+            style={{ fontFamily: "var(--font-display)", color: "var(--l-ink)" }}
+          >
+            photon
+          </Link>
+
+          <span className="h-4 w-px" style={{ background: "var(--l-rule)" }} />
+
+          {/* workspace menu — a real menu, not a native select on paper */}
+          <div className="relative">
+            <button
+              onClick={() => setWsMenu((v) => !v)}
+              className="flex items-center gap-2 text-[12px] tracking-[0.14em] uppercase l-quiet"
+            >
+              <span style={{ color: "var(--l-ink)" }}>{workspace?.name ?? "…"}</span>
+              <span style={{ fontSize: 9 }}>{wsMenu ? "▲" : "▼"}</span>
+            </button>
+            {wsMenu && (
+              <>
+                <button
+                  className="fixed inset-0 z-10 cursor-default"
+                  aria-label="Close menu"
+                  onClick={() => setWsMenu(false)}
+                />
+                <div className="l-sheet absolute left-0 top-8 z-20 w-64 p-2">
+                  {workspaces.map((w) => (
+                    <button
+                      key={w.id}
+                      onClick={() => switchWorkspace(w.id)}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] transition-colors hover:bg-[rgba(28,25,23,.04)]"
+                      style={{ color: w.id === current ? "var(--l-ink)" : "var(--l-ink-2)" }}
+                    >
+                      <span
+                        className="l-dot shrink-0"
+                        style={{ background: w.id === current ? "var(--l-rust)" : "var(--l-rule)" }}
+                      />
+                      <span className="truncate">{w.name}</span>
+                      {w.is_personal && (
+                        <span className="ml-auto text-[10px] tracking-[0.18em] uppercase l-t-muted">
+                          personal
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                  <div className="my-2 h-px" style={{ background: "var(--l-rule)" }} />
+                  <button
+                    onClick={() => {
+                      setNewWs("");
+                      setWsMenu(false);
+                      requestAnimationFrame(() => newWsRef.current?.focus());
+                    }}
+                    className="w-full rounded-lg px-3 py-2 text-left text-[12px] tracking-[0.14em] uppercase l-quiet"
+                  >
+                    + New workspace
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex-1" />
+
+          <Link href="/call" className="l-btn">
+            Start a call
+          </Link>
+          <button
+            onClick={() => {
+              logout();
+              router.replace("/login");
+            }}
+            className="text-[12px] tracking-[0.14em] uppercase l-quiet"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-8">
+      <main className="mx-auto max-w-5xl px-6 pb-24 md:px-10">
+        {newWs !== null && (
+          <div className="mt-8 flex items-center gap-3">
+            <input
+              ref={newWsRef}
+              className="l-input max-w-xs"
+              placeholder="Workspace name"
+              value={newWs}
+              onChange={(e) => setNewWs(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addWorkspace();
+                if (e.key === "Escape") setNewWs(null);
+              }}
+            />
+            <button onClick={addWorkspace} disabled={!newWs.trim()} className="l-btn">
+              Create
+            </button>
+            <button onClick={() => setNewWs(null)} className="text-[12px] uppercase l-quiet">
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* what the agent can currently answer from — the actual state of
+            this workspace, stated before anything asks to be configured */}
+        <section className="pt-14">
+          <div className="flex items-center gap-4">
+            <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
+            <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">
+              This workspace
+            </span>
+            <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
+          </div>
+
+          <div className="mt-8 grid gap-10 md:grid-cols-[1.15fr_1fr]">
+            <div>
+              <h1
+                className="text-[clamp(28px,3.4vw,42px)] leading-[1.12]"
+                style={{ color: "var(--l-ink)" }}
+              >
+                {firstRun ? (
+                  <>
+                    Nothing connected yet — so it{" "}
+                    <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
+                      knows nothing
+                    </span>
+                    .
+                  </>
+                ) : ready.length === 0 ? (
+                  <>
+                    Reading now. It will answer{" "}
+                    <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
+                      from this
+                    </span>{" "}
+                    shortly.
+                  </>
+                ) : (
+                  <>
+                    Ready for calls, from{" "}
+                    <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
+                      {ready.length} {ready.length === 1 ? "repository" : "repositories"}
+                    </span>
+                    .
+                  </>
+                )}
+              </h1>
+              <p className="mt-5 max-w-md text-[15px] leading-relaxed l-t-2">
+                {firstRun
+                  ? "Connect a source and pick what it may read. Nothing is indexed until you choose it, and it abstains rather than guessing about anything it has not read."
+                  : indexing.length > 0
+                    ? `${indexing.length} ${indexing.length === 1 ? "repository is" : "repositories are"} being cloned, parsed and indexed. This page updates itself; you can leave it.`
+                    : "Ask it anything grounded in what is connected below. Every answer names its source, and it says so out loud when the evidence runs out."}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-6 self-start">
+              {[
+                [String(ghInstallCount), ghInstallCount === 1 ? "source" : "sources"],
+                [String(ready.length), "ready"],
+                [String(indexing.length), "indexing"],
+              ].map(([n, l], i) => (
+                <div
+                  key={l}
+                  className="border-t pt-4"
+                  style={{ borderColor: i === 1 ? "var(--l-rust)" : "var(--l-rule)" }}
+                >
+                  <div
+                    className="leading-none"
+                    style={{ fontFamily: "var(--font-display)", fontSize: 40, color: "var(--l-ink)" }}
+                  >
+                    {n}
+                  </div>
+                  <div className="mt-3 text-[10px] tracking-[0.2em] uppercase l-t-muted">{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {error && (
+            <p className="l-note mt-8 pl-4 text-[13px] l-t-2" style={{ borderLeft: "1px solid var(--l-rust)" }}>
+              {error}
+            </p>
+          )}
+        </section>
+
+        {/* first run: say what the three steps are, rather than showing a
+            grid of cards and hoping the order is obvious */}
+        {firstRun && (
+          <section className="mt-16">
+            <div className="grid gap-px md:grid-cols-3">
+              {[
+                ["I", "Connect a source", "GitHub, Slack, Jira and the rest. Read-only, and scoped to what you select."],
+                ["II", "Choose what it reads", "Pick the repositories and channels. Indexing takes seconds, not an afternoon."],
+                ["III", "Join a call", "It listens, answers in about a second and a half, and shows you where each answer came from."],
+              ].map(([n, t, d]) => (
+                <div key={n} className="border-t py-8 pr-8" style={{ borderColor: "var(--l-rule)" }}>
+                  <span
+                    className="italic leading-none"
+                    style={{ fontFamily: "var(--font-display)", fontSize: 34, color: "var(--l-rust)" }}
+                  >
+                    {n}
+                  </span>
+                  <h3 className="mt-4 text-[18px]" style={{ color: "var(--l-ink)" }}>
+                    {t}
+                  </h3>
+                  <p className="mt-2 text-[14px] leading-relaxed l-t-2">{d}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <SourcesGrid
           githubConnected={ghInstallCount}
           onConnectGithub={() => {
@@ -312,127 +522,207 @@ function Dashboard() {
           onConnectSource={(key) => setConnectSource(key)}
         />
 
-        <section className="mb-8">
-          {ghError && <p className="text-red-400 text-sm mt-3">{ghError}</p>}
+        {ghError && (
+          <p className="l-note mt-6 pl-4 text-[13px] l-t-2" style={{ borderLeft: "1px solid var(--l-rust)" }}>
+            {ghError}
+          </p>
+        )}
 
-          {ghInstallationId !== null && (
-            <div className="mt-4 border border-neutral-800 rounded p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium">Choose repositories to import</h3>
-                <button
-                  onClick={() => setGhInstallationId(null)}
-                  className="text-xs text-neutral-500 hover:text-neutral-200"
-                >
-                  close
-                </button>
-              </div>
-              {ghBusy && ghRepos.length === 0 ? (
-                <p className="text-sm text-neutral-500">Loading repositories…</p>
-              ) : (
-                <>
-                  <ul className="space-y-1 max-h-64 overflow-y-auto">
-                    {ghRepos.map((r) => (
-                      <li key={r.id} className="flex items-center gap-2 text-sm">
+        {/* the repo picker, once GitHub has been installed */}
+        {ghInstallationId !== null && (
+          <section className="l-sheet mt-10 p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[16px]" style={{ color: "var(--l-ink)" }}>
+                Choose repositories to import
+              </h3>
+              <button onClick={() => setGhInstallationId(null)} className="text-[12px] uppercase l-quiet">
+                Close
+              </button>
+            </div>
+
+            {ghBusy && ghRepos.length === 0 ? (
+              <p className="mt-4 text-[14px] l-t-muted">Loading repositories…</p>
+            ) : (
+              <>
+                <div className="mt-5 flex items-center gap-4">
+                  <button
+                    onClick={() =>
+                      setGhSelected(new Set(ghRepos.filter((r) => !r.already_imported).map((r) => r.id)))
+                    }
+                    className="text-[11px] tracking-[0.16em] uppercase l-quiet"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    onClick={() => setGhSelected(new Set())}
+                    className="text-[11px] tracking-[0.16em] uppercase l-quiet"
+                  >
+                    Clear
+                  </button>
+                  <span className="text-[11px] tracking-[0.16em] uppercase l-t-muted">
+                    {ghSelected.size} selected
+                  </span>
+                </div>
+
+                <ul className="mt-4 max-h-72 overflow-y-auto pr-2">
+                  {ghRepos.map((r) => (
+                    <li key={r.id}>
+                      <label
+                        className="flex cursor-pointer items-center gap-3 border-b py-3 text-[14px]"
+                        style={{ borderColor: "var(--l-rule)" }}
+                      >
                         <input
                           type="checkbox"
                           disabled={r.already_imported}
                           checked={r.already_imported || ghSelected.has(r.id)}
                           onChange={() => toggleGhRepo(r.id)}
+                          className="accent-[color:var(--l-rust)]"
                         />
-                        <span className={r.already_imported ? "text-neutral-600" : ""}>
+                        <span
+                          className="truncate"
+                          style={{ color: r.already_imported ? "var(--l-muted)" : "var(--l-ink)" }}
+                        >
                           {r.full_name}
                         </span>
                         {r.private && (
-                          <span className="text-[10px] text-neutral-600 border border-neutral-800 rounded px-1">
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[10px] tracking-[0.14em] uppercase l-t-muted"
+                            style={{ border: "1px solid var(--l-rule)" }}
+                          >
                             private
                           </span>
                         )}
                         {r.already_imported && (
-                          <span className="text-[10px] text-emerald-400">already imported</span>
+                          <span className="ml-auto text-[10px] tracking-[0.16em] uppercase l-t-rust">
+                            imported
+                          </span>
                         )}
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="mt-3 flex items-center gap-3">
-                    <button
-                      onClick={importSelected}
-                      disabled={ghBusy || ghSelected.size === 0}
-                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
-                    >
-                      {ghBusy ? "Importing…" : `Import ${ghSelected.size} repo${ghSelected.size === 1 ? "" : "s"}`}
-                    </button>
-                    {ghEstimate && (
-                      <p className="text-xs text-neutral-500">
-                        about <span className="text-neutral-300">{ghEstimate.range_human}</span> to
-                        parse and index
-                        {ghEstimate.calibrated
-                          ? ` · from ${ghEstimate.sample_size} previous imports`
-                          : " · rough, not yet calibrated here"}
-                      </p>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </section>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
 
-        <section>
-          <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">Repositories</h2>
+                <div className="mt-5 flex flex-wrap items-center gap-4">
+                  <button onClick={importSelected} disabled={ghBusy || ghSelected.size === 0} className="l-btn">
+                    {ghBusy ? "Importing…" : `Import ${ghSelected.size} repo${ghSelected.size === 1 ? "" : "s"}`}
+                  </button>
+                  {ghEstimate && (
+                    <p className="text-[12px] l-t-muted">
+                      about <span className="l-t-ink">{ghEstimate.range_human}</span> to parse and index
+                      {ghEstimate.calibrated
+                        ? ` · from ${ghEstimate.sample_size} previous imports`
+                        : " · rough, not yet calibrated here"}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        )}
 
-          <form onSubmit={add} className="flex gap-2 mb-4">
-            <input
-              className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
-              placeholder="https://github.com/org/repo"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
+        {/* what it has read */}
+        <section className="mt-20">
+          <div className="flex items-center gap-4">
+            <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
+            <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">Repositories</span>
+            <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
             <button
-              disabled={busy}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
+              onClick={() => setShowUrlField((v) => !v)}
+              className="text-[11px] tracking-[0.16em] uppercase whitespace-nowrap l-quiet"
             >
-              {busy ? "Connecting…" : "Connect"}
+              {showUrlField ? "Cancel" : "+ Paste a public URL"}
             </button>
-          </form>
+          </div>
 
-          {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+          {showUrlField && (
+            <form onSubmit={add} className="mt-6 flex flex-wrap items-center gap-3">
+              <input
+                className="l-input max-w-md flex-1"
+                placeholder="https://github.com/org/repo"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                autoFocus
+              />
+              <button disabled={busy || !url.trim()} className="l-btn">
+                {busy ? "Connecting…" : "Connect"}
+              </button>
+              <p className="w-full text-[12px] l-t-muted">
+                Public repositories only. For anything private, connect GitHub above so access is
+                scoped and revocable.
+              </p>
+            </form>
+          )}
 
           {repos.length === 0 ? (
-            <p className="text-neutral-600 text-sm">
-              No repositories in this workspace yet. Connect one above — it clones, parses and
-              embeds in about a minute.
+            <p className="mt-8 max-w-lg text-[15px] leading-relaxed l-t-muted">
+              Nothing indexed in this workspace yet. Connect a source above — cloning, parsing and
+              embedding a mid-sized repository takes about seventeen seconds.
             </p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="mt-6">
               {repos.map((r) => (
                 <li
                   key={r.id}
-                  className="border border-neutral-800 rounded p-3 flex items-center gap-3"
+                  className="l-row group relative grid items-center gap-4 border-b py-5 md:grid-cols-[1fr_auto_auto]"
+                  style={{ borderColor: "var(--l-rule)" }}
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm truncate">{r.name}</p>
-                    <p className="text-xs text-neutral-500 truncate">
-                      {r.status.toLowerCase() === "ready"
-                        ? `${r.file_count} files · ${r.function_count} functions` +
-                          (r.ingest_seconds ? ` · parsed in ${Math.round(r.ingest_seconds)}s` : "")
-                        : r.error_message || r.status}
+                  <span className="l-row-rule" style={{ background: "var(--l-rust)" }} />
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px]" style={{ color: "var(--l-ink)" }}>
+                      {r.name}
                     </p>
+                    <p className="mt-1 truncate text-[13px] l-t-muted">
+                      {isReady(r.status)
+                        ? `${r.file_count} files · ${r.function_count} functions` +
+                          (r.ingest_seconds ? ` · indexed in ${Math.round(r.ingest_seconds)}s` : "")
+                        : r.error_message || "Cloning, parsing and embedding…"}
+                    </p>
+                    {isActive(r.status) && <span className="l-indeterminate mt-3 block max-w-xs" />}
                   </div>
+
                   <StatusPill status={r.status} />
-                  <button
-                    onClick={async () => {
-                      await deleteRepo(r.id);
-                      refreshRepos();
-                    }}
-                    className="text-xs text-neutral-500 hover:text-red-400"
-                  >
-                    remove
-                  </button>
+
+                  {confirmRemove === r.id ? (
+                    <span className="flex items-center gap-3 text-[11px] tracking-[0.16em] uppercase">
+                      <button
+                        onClick={async () => {
+                          setConfirmRemove(null);
+                          await deleteRepo(r.id);
+                          refreshRepos();
+                        }}
+                        className="l-t-rust"
+                      >
+                        Remove
+                      </button>
+                      <button onClick={() => setConfirmRemove(null)} className="l-quiet">
+                        Keep
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmRemove(r.id)}
+                      className="text-[11px] tracking-[0.16em] uppercase opacity-0 transition-opacity group-hover:opacity-100 l-quiet"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </section>
+
+        {ready.length > 0 && (
+          <section className="mt-20 flex flex-wrap items-center justify-between gap-6 border-t pt-10" style={{ borderColor: "var(--l-rule)" }}>
+            <p className="max-w-md text-[15px] leading-relaxed l-t-2">
+              It has read this workspace. Open a room, share the code, and ask it something you
+              would have had to go looking for.
+            </p>
+            <Link href="/call" className="l-btn">
+              Start a call
+            </Link>
+          </section>
+        )}
       </main>
     </div>
   );
@@ -440,13 +730,21 @@ function Dashboard() {
 
 function StatusPill({ status }: { status: string }) {
   const normalised = status.toLowerCase();
-  const tone =
-    normalised === "ready"
-      ? "border-emerald-600/50 text-emerald-300"
-      : normalised === "failed"
-        ? "border-red-600/50 text-red-300"
-        : "border-amber-600/50 text-amber-300";
+  const label = normalised === "ready" ? "ready" : normalised === "failed" ? "failed" : "indexing";
+  const live = normalised !== "ready" && normalised !== "failed";
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded border shrink-0 ${tone}`}>{normalised}</span>
+    <span
+      className="flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[10px] tracking-[0.18em] uppercase"
+      style={{
+        border: "1px solid var(--l-rule)",
+        color: normalised === "failed" ? "var(--l-rust)" : "var(--l-ink-2)",
+      }}
+    >
+      <span
+        className={live ? "l-dot l-dot-live" : "l-dot"}
+        style={live ? undefined : { background: normalised === "failed" ? "var(--l-rust)" : "var(--l-ink)" }}
+      />
+      {label}
+    </span>
   );
 }

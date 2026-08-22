@@ -82,6 +82,13 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS enabled_sources JSONB"
         ))
+        # Existing workspaces predate the distinction. Backfilled as
+        # individual rather than team: a workspace nobody was ever invited
+        # to IS an individual one, and defaulting the other way would
+        # silently label every existing workspace as shared.
+        await conn.execute(text(
+            "ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS kind VARCHAR NOT NULL DEFAULT 'INDIVIDUAL'"
+        ))
         # GitHub App support: OAuth login linking (users.github_id/login,
         # password now optional) and per-repo installation tagging (for the
         # picker's already-imported diff and installation-token cloning).

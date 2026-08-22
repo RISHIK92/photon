@@ -340,6 +340,47 @@ the question shape and invents a plausible tool name. The execution-time
 block catches it, which is exactly why hiding tools from the prompt was
 never treated as sufficient on its own.
 
+## Workspace types, and a waiting room on /call/[slug]
+
+**Workspace kind (individual | team)** is asked at creation, not inferred,
+because the answer changes what "connect Slack" MEANS: in a team workspace
+it exposes that Slack to everyone ever admitted, and someone connecting a
+personal account should know which of those they are doing. Inviting into
+an individual workspace is refused with a 409 rather than silently
+upgrading it — turning someone's private workspace into a shared one is not
+a side effect of clicking Invite. Existing workspaces backfill to
+INDIVIDUAL: a workspace nobody was ever invited to IS an individual one,
+and defaulting the other way would relabel every existing one as shared.
+
+**`/call/[slug]` — knock and admit.** A meeting code is shareable, which is
+the point, but a link forwarded one hop too far should not put a stranger
+into a live customer call. So the code gets you to the door and someone
+already inside opens it.
+
+- **Workspace members skip the queue entirely.** They already have access to
+  everything the call can reach, and making colleagues queue teaches people
+  to click Admit without reading it.
+- A signed-in non-member does not have to retype their name — the API uses
+  their account email. Only true strangers introduce themselves.
+- **The token route verifies admission server-side.** The waiting room is
+  only real if a join token cannot be obtained without passing through it,
+  so `/api/livekit-token` now refuses a guest with no knock, and a guest
+  whose knock is pending or denied. This closed a genuine hole: the route
+  previously minted a token for anyone who knew the room name.
+- Any member on the call can decide. Waiting for one specific person while
+  a customer sits outside is worse than trusting the colleagues in the room.
+- The waiter POLLS rather than subscribing: they are not in the room yet, so
+  there is no room connection to listen on.
+- `PhotonWaiting` reuses the landing page's photon streak and ring, but
+  LOOPING rather than resolving — waiting is open-ended, and an animation
+  that completes would imply something had been decided.
+
+**Verified end to end**: a guest asked to join and saw the waiting screen;
+admitting them from the other side moved them into the call automatically,
+carrying the code, the admission proof and their name. `tests/
+test_waiting_room.py` (5 tests) covers the denials: pending cannot mint a
+token, no-knock cannot, denied cannot, and the waiting list is not public.
+
 ## Multi-party calls — poke to address, meeting codes, shared transcript
 
 Decided with the user: **poke by button AND wake word**, guests treated as

@@ -21,9 +21,9 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "Photon — answers from evidence, live on the call",
+  title: "Photon — the employee who has already read everything",
   description:
-    "A company brain that joins your customer calls, reads your code, docs, Slack, Jira and tickets, and answers in about two seconds — with a citation behind every claim.",
+    "Photon joins your customer calls having read every repo, doc, Slack thread and ticket you connect, and answers in about a second and a half — with a citation behind every claim. English, Hindi, Telugu and Tamil.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

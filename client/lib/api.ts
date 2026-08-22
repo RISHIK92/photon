@@ -330,3 +330,47 @@ export const uploadCustomDoc = (form: FormData) =>
 
 export const listCustomDocs = () =>
   api<{ id: string; title: string; chunk_count: number }[]>("/api/custom-docs");
+
+
+// ── Waiting room ─────────────────────────────────────────────────────────
+export type Knock = { id: string; status: "pending" | "admitted" | "denied"; reason?: string };
+export type WaitingPerson = {
+  id: string;
+  display_name: string;
+  status: string;
+  created_at: string;
+  is_member: boolean;
+};
+
+/** Ask to be let into a call. Unauthenticated on purpose — external guests
+ * join by link and have no account. A signed-in member is auto-admitted. */
+export async function knockForCall(slug: string, displayName: string): Promise<Knock> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/api/meetings/${slug}/knock`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ display_name: displayName }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, detail?.detail || "Could not ask to join");
+  }
+  return res.json();
+}
+
+export async function knockStatus(slug: string, knockId: string): Promise<Knock> {
+  const res = await fetch(`${BASE}/api/meetings/${slug}/knock/${knockId}`);
+  if (!res.ok) throw new ApiError(res.status, "That request is no longer valid");
+  return res.json();
+}
+
+export const listWaiting = (slug: string) => api<WaitingPerson[]>(`/api/meetings/${slug}/knocks`);
+
+export const decideKnock = (slug: string, knockId: string, admit: boolean) =>
+  api<Knock>(`/api/meetings/${slug}/knocks/${knockId}`, {
+    method: "POST",
+    body: JSON.stringify({ admit }),
+  });

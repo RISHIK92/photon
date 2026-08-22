@@ -41,8 +41,8 @@ export default function CallSetup({
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  if (error) return <p className="text-red-400 text-sm">{error}</p>;
-  if (!options) return <p className="text-neutral-500 text-sm">Loading call options…</p>;
+  if (error) return <p className="text-[color:var(--l-rust)] text-sm">{error}</p>;
+  if (!options) return <p className="text-[color:var(--l-muted)] text-sm">Loading call options…</p>;
 
   const toggle = (list: string[], key: string) =>
     list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
@@ -64,7 +64,7 @@ export default function CallSetup({
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
       <section>
-        <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2">
+        <h3 className="text-xs uppercase tracking-wide text-[color:var(--l-muted)] mb-2">
           What is this call for?
         </h3>
         <div className="flex flex-wrap gap-2">
@@ -77,18 +77,18 @@ export default function CallSetup({
                 title={b.description}
                 className={`rounded border px-3 py-1.5 text-sm ${
                   on
-                    ? "border-indigo-500/60 bg-indigo-500/10 text-indigo-200"
-                    : "border-neutral-700 text-neutral-400 hover:text-neutral-200"
+                    ? "border-[rgba(180,83,9,.45)] bg-[rgba(180,83,9,.07)] text-[color:var(--l-rust)]"
+                    : "border-[color:var(--l-rule)] text-[color:var(--l-ink-2)] hover:text-[color:var(--l-ink)]"
                 }`}
               >
                 {b.label}
-                {b.internal_caution && <span className="ml-1 text-amber-400">·internal</span>}
+                {b.internal_caution && <span className="ml-1 text-[color:var(--l-terra)]">·internal</span>}
               </button>
             );
           })}
         </div>
         {internalCaution && (
-          <p className="text-xs text-amber-300/90 mt-2">
+          <p className="text-xs text-[color:var(--l-terra)] mt-2">
             Knowledge transfer allows internal detail — commercial terms, incident history,
             reasoning you would not say to a customer. The agent will flag it if a guest who
             isn&apos;t a workspace member is on the call, but don&apos;t pick this for a customer call.
@@ -97,7 +97,7 @@ export default function CallSetup({
       </section>
 
       <section>
-        <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2">Language</h3>
+        <h3 className="text-xs uppercase tracking-wide text-[color:var(--l-muted)] mb-2">Language</h3>
         <div className="flex flex-wrap gap-2">
           {options.language_modes.map((m) => (
             <button
@@ -105,19 +105,19 @@ export default function CallSetup({
               onClick={() => setLanguage(m.key)}
               className={`rounded border px-3 py-1.5 text-sm text-left ${
                 language === m.key
-                  ? "border-indigo-500/60 bg-indigo-500/10 text-indigo-200"
-                  : "border-neutral-700 text-neutral-400 hover:text-neutral-200"
+                  ? "border-[rgba(180,83,9,.45)] bg-[rgba(180,83,9,.07)] text-[color:var(--l-rust)]"
+                  : "border-[color:var(--l-rule)] text-[color:var(--l-ink-2)] hover:text-[color:var(--l-ink)]"
               }`}
             >
               {m.label}
-              <span className="block text-[10px] text-neutral-500">{m.detail}</span>
+              <span className="block text-[10px] text-[color:var(--l-muted)]">{m.detail}</span>
             </button>
           ))}
         </div>
       </section>
 
       <section>
-        <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2">
+        <h3 className="text-xs uppercase tracking-wide text-[color:var(--l-muted)] mb-2">
           Sources the agent may use
         </h3>
         <div className="flex flex-col gap-2">
@@ -135,7 +135,7 @@ export default function CallSetup({
         {!showMore ? (
           <button
             onClick={() => setShowMore(true)}
-            className="text-xs text-neutral-400 hover:text-neutral-100 mt-2"
+            className="text-xs text-[color:var(--l-ink-2)] hover:text-[color:var(--l-ink)] mt-2"
           >
             More sources ({secondary.length})
           </button>
@@ -155,13 +155,13 @@ export default function CallSetup({
       </section>
 
       {nothingConnected && (
-        <div className="border border-amber-600/50 bg-amber-500/5 rounded p-3 text-sm">
-          <p className="text-amber-300">Connect a source before starting a call</p>
-          <p className="text-neutral-400 mt-1">
+        <div className="border border-[rgba(194,112,61,.4)] bg-[rgba(194,112,61,.06)] rounded p-3 text-sm">
+          <p className="text-[color:var(--l-terra)]">Connect a source before starting a call</p>
+          <p className="text-[color:var(--l-ink-2)] mt-1">
             The agent answers only from what you connect. With nothing indexed it would abstain
             from every question, which is worse than not starting.
           </p>
-          <a href="/dashboard" className="inline-block mt-2 text-indigo-400 hover:text-indigo-300">
+          <a href="/dashboard" className="inline-block mt-2 text-[color:var(--l-rust)] hover:text-[color:var(--l-rust)]">
             Go to sources →
           </a>
         </div>
@@ -171,11 +171,11 @@ export default function CallSetup({
         <button
           onClick={() => onStart({ bot_types: botTypes, language_mode: language, enabled_sources: sources })}
           disabled={busy || botTypes.length === 0 || nothingConnected}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
+          className="bg-[color:var(--l-ink)] hover:bg-[color:var(--l-rust)] disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
         >
           {busy ? "Starting…" : "Start call"}
         </button>
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-[color:var(--l-muted)]">
           {nothingConnected
             ? "Nothing connected yet"
             : sources.length === 0
@@ -200,9 +200,9 @@ function SourceRow({
 }) {
   if (source.coming_soon) {
     return (
-      <div className="flex items-center gap-3 border border-neutral-800 rounded px-3 py-2 opacity-60">
-        <span className="text-sm text-neutral-400 flex-1">{source.label}</span>
-        <span className="text-[10px] text-neutral-500 border border-neutral-700 rounded px-1.5 py-0.5">
+      <div className="flex items-center gap-3 border border-[color:var(--l-rule)] rounded px-3 py-2 opacity-60">
+        <span className="text-sm text-[color:var(--l-ink-2)] flex-1">{source.label}</span>
+        <span className="text-[10px] text-[color:var(--l-muted)] border border-[color:var(--l-rule)] rounded px-1.5 py-0.5">
           soon
         </span>
       </div>
@@ -212,7 +212,7 @@ function SourceRow({
   return (
     <div
       className={`flex items-center gap-3 border rounded px-3 py-2 ${
-        enabled && source.available ? "border-emerald-700/50 bg-emerald-500/5" : "border-neutral-800"
+        enabled && source.available ? "border-[rgba(180,83,9,.4)] bg-[rgba(180,83,9,.06)]" : "border-[color:var(--l-rule)]"
       }`}
     >
       <input
@@ -222,14 +222,14 @@ function SourceRow({
         onChange={onToggle}
         className="shrink-0"
       />
-      <span className="text-sm text-neutral-200 flex-1">
+      <span className="text-sm text-[color:var(--l-ink)] flex-1">
         {source.label}
-        <span className="block text-[10px] text-neutral-500">{source.detail}</span>
+        <span className="block text-[10px] text-[color:var(--l-muted)]">{source.detail}</span>
       </span>
       {!source.available && (
         <button
           onClick={onConnect}
-          className="text-xs border border-indigo-500/60 text-indigo-300 hover:bg-indigo-500/10 rounded px-2 py-1"
+          className="text-xs border border-[rgba(180,83,9,.45)] text-[color:var(--l-rust)] hover:bg-[rgba(180,83,9,.07)] rounded px-2 py-1"
         >
           Connect
         </button>

@@ -19,6 +19,10 @@ const BRAIN_API = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:800
 export async function GET(req: NextRequest) {
   const room = req.nextUrl.searchParams.get("room") || "photon";
   const guestName = (req.nextUrl.searchParams.get("name") || "").trim().slice(0, 40);
+  // Proof that someone inside the call let this person in. The waiting room
+  // is only real if a token cannot be obtained without passing through it,
+  // so this is verified against the API rather than trusted.
+  const knockId = req.nextUrl.searchParams.get("knock");
   const authHeader = req.headers.get("authorization");
 
   const apiKey = process.env.LIVEKIT_API_KEY;
@@ -47,6 +51,22 @@ export async function GET(req: NextRequest) {
   } else {
     if (!guestName) {
       return NextResponse.json({ error: "A name is required to join as a guest" }, { status: 400 });
+    }
+    if (!knockId) {
+      return NextResponse.json(
+        { error: "Ask to join first — someone in the call has to let you in" },
+        { status: 403 }
+      );
+    }
+    const admission = await fetch(
+      `${BRAIN_API}/api/meetings/${encodeURIComponent(room)}/admission/${encodeURIComponent(knockId)}`
+    );
+    const verdict = admission.ok ? await admission.json() : { admitted: false };
+    if (!verdict.admitted) {
+      return NextResponse.json(
+        { error: "You haven't been admitted to this call yet" },
+        { status: 403 }
+      );
     }
     // Random suffix so two guests typing the same name don't collide into
     // one LiveKit identity (which would silently disconnect the first).

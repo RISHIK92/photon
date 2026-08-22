@@ -14,13 +14,13 @@ export default function AdvancedPanel({ turns }: { turns: TurnTrace[] }) {
   return (
     <div className="flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-1 shrink-0">
-        <h2 className="text-xs uppercase tracking-wide text-neutral-500">Advanced · agent pipeline</h2>
+        <h2 className="text-xs uppercase tracking-wide text-[color:var(--l-muted)]">Advanced · agent pipeline</h2>
         {current && <LiveClock turn={current} />}
       </div>
 
-      <div className="bg-neutral-900 border border-neutral-800 rounded p-3 h-36 overflow-y-auto text-xs">
+      <div className="bg-[rgba(28,25,23,.03)] border border-[color:var(--l-rule)] rounded p-3 h-36 overflow-y-auto text-xs">
         {!current ? (
-          <p className="text-neutral-600">
+          <p className="text-[color:var(--l-muted)]">
             Idle. Ask a question by voice or text and every plan, tool call and LLM hop shows up here as it
             happens.
           </p>
@@ -28,7 +28,7 @@ export default function AdvancedPanel({ turns }: { turns: TurnTrace[] }) {
           <TurnView turn={current} />
         )}
         {older.length > 0 && (
-          <div className="mt-3 pt-2 border-t border-neutral-800 space-y-1">
+          <div className="mt-3 pt-2 border-t border-[color:var(--l-rule)] space-y-1">
             {older.map((t) => (
               <PreviousTurn key={t.id} turn={t} />
             ))}
@@ -60,16 +60,16 @@ function LiveClock({ turn }: { turn: TurnTrace }) {
       <span
         className={`text-[10px] px-1.5 py-0.5 rounded border ${
           turn.source === "voice"
-            ? "border-emerald-600/50 text-emerald-300"
-            : "border-sky-600/50 text-sky-300"
+            ? "border-[rgba(180,83,9,.4)] text-[color:var(--l-rust)]"
+            : "border-[color:var(--l-rule)] text-[#0369a1]"
         }`}
       >
         {turn.source}
       </span>
       <span
-        className={`font-mono text-[11px] tabular-nums ${running ? "text-amber-300" : "text-neutral-300"}`}
+        className={`font-mono text-[11px] tabular-nums ${running ? "text-[color:var(--l-terra)]" : "text-[color:var(--l-ink-2)]"}`}
       >
-        {running && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse mr-1" />}
+        {running && <span className="inline-block w-1.5 h-1.5 rounded-full bg-[color:var(--l-terra)] animate-pulse mr-1" />}
         {fmtMs(elapsed)}
       </span>
     </div>
@@ -96,7 +96,7 @@ function TurnView({ turn }: { turn: TurnTrace }) {
 
   return (
     <div className="space-y-1.5">
-      <p className="text-neutral-400 truncate" title={turn.question}>
+      <p className="text-[color:var(--l-ink-2)] truncate" title={turn.question}>
         {turn.question ? `“${turn.question}”` : "…"}
       </p>
 
@@ -111,7 +111,7 @@ function TurnView({ turn }: { turn: TurnTrace }) {
             marker={stage.marker}
           />
           {tools.map((call) => (
-            <div key={call.id} className="ml-3 border-l border-neutral-800 pl-2">
+            <div key={call.id} className="ml-3 border-l border-[color:var(--l-rule)] pl-2">
               <Row
                 label={call.tool}
                 mono
@@ -131,10 +131,10 @@ function TurnView({ turn }: { turn: TurnTrace }) {
         </div>
       ))}
 
-      {turn.error && <p className="text-red-400">error: {turn.error}</p>}
+      {turn.error && <p className="text-[color:var(--l-rust)]">error: {turn.error}</p>}
 
       {turn.status !== "running" && (
-        <p className="text-[10px] text-neutral-500 pt-1 border-t border-neutral-800">
+        <p className="text-[10px] text-[color:var(--l-muted)] pt-1 border-t border-[color:var(--l-rule)]">
           total {fmtMs(turn.totalMs ?? 0)} · {totals.toolCount} tool call
           {totals.toolCount === 1 ? "" : "s"} {fmtMs(totals.toolMs)} · llm {fmtMs(totals.llmMs)}
           {turn.confidence && ` · confidence ${turn.confidence}`}
@@ -163,7 +163,7 @@ function Row({
   marker?: boolean;
 }) {
   const color =
-    state === "running" ? "bg-amber-400" : state === "failed" ? "bg-red-500" : "bg-indigo-400";
+    state === "running" ? "bg-[color:var(--l-terra)]" : state === "failed" ? "bg-[color:var(--l-rust)]" : "bg-[color:var(--l-rust)]";
   const width = marker || ms === undefined ? 0 : Math.max(2, ((ms ?? 0) / slowest) * 100);
 
   return (
@@ -171,8 +171,8 @@ function Row({
       <span
         className={`shrink-0 w-1.5 h-1.5 rounded-full ${color} ${state === "running" ? "animate-pulse" : ""}`}
       />
-      <span className={`shrink-0 ${mono ? "font-mono text-indigo-200" : "text-neutral-200"}`}>{label}</span>
-      {detail && <span className="text-neutral-500 truncate">{detail}</span>}
+      <span className={`shrink-0 ${mono ? "font-mono text-[color:var(--l-rust)]" : "text-[color:var(--l-ink)]"}`}>{label}</span>
+      {detail && <span className="text-[color:var(--l-muted)] truncate">{detail}</span>}
       <span className="flex-1 min-w-[12px] h-1 relative">
         {width > 0 && (
           <span
@@ -181,7 +181,7 @@ function Row({
           />
         )}
       </span>
-      <span className="shrink-0 font-mono tabular-nums text-neutral-400 text-[11px]">
+      <span className="shrink-0 font-mono tabular-nums text-[color:var(--l-ink-2)] text-[11px]">
         {state === "running" ? "running…" : ms !== undefined && !marker ? fmtMs(ms) : ""}
       </span>
     </div>
@@ -191,7 +191,7 @@ function Row({
 function PreviousTurn({ turn }: { turn: TurnTrace }) {
   const totals = turnTotals(turn);
   return (
-    <p className="text-[10px] text-neutral-600 truncate">
+    <p className="text-[10px] text-[color:var(--l-muted)] truncate">
       {fmtMs(turn.totalMs ?? 0)} · {totals.toolCount} tool{totals.toolCount === 1 ? "" : "s"} ·{" "}
       {turn.abstained ? "abstained" : turn.confidence ?? turn.status} — {turn.question}
     </p>

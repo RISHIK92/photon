@@ -21,30 +21,48 @@ export default function SourcesGrid({
   onConnectSource: (key: string) => void;
 }) {
   const live = INTEGRATIONS.filter((i) => i.status === "live");
-  const connectable = (key: string) => (key === "github" ? onConnectGithub : () => onConnectSource(key));
+  const connectable = (key: string) =>
+    key === "github" ? onConnectGithub : () => onConnectSource(key);
   const soon = INTEGRATIONS.filter((i) => i.status === "coming_soon");
 
   return (
-    <section className="mb-8">
-      <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">Sources</h2>
+    <section className="mt-20">
+      <div className="flex items-center gap-4">
+        <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
+        <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">Sources</span>
+        <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
+        <span className="text-[11px] tracking-[0.2em] uppercase whitespace-nowrap l-t-muted">
+          {live.length} available
+        </span>
+      </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {live.map((i) => (
-          <button
-            key={i.key}
-            onClick={connectable(i.key)}
-            className="text-left border border-emerald-700/60 bg-emerald-500/5 rounded p-3 hover:bg-emerald-500/10 transition-colors"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-100">{i.name}</span>
-              <span className="text-[10px] text-emerald-300 border border-emerald-600/50 rounded px-1.5 py-0.5">
-                {i.key === "github" && githubConnected > 0 ? `${githubConnected} connected` : "connect"}
-              </span>
-            </div>
-            <p className="text-xs text-neutral-400 mt-1">{i.unlocks}</p>
-            <p className="text-[10px] text-neutral-600 mt-1">{SCOPE_LABEL[i.scope]}</p>
-          </button>
-        ))}
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {live.map((i) => {
+          const connected = i.key === "github" && githubConnected > 0;
+          return (
+            <button key={i.key} onClick={connectable(i.key)} className="l-card group p-5 text-left">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[16px]" style={{ color: "var(--l-ink)" }}>
+                  {i.name}
+                </span>
+                <span
+                  className="flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] tracking-[0.16em] uppercase whitespace-nowrap"
+                  style={{
+                    border: "1px solid var(--l-rule)",
+                    color: connected ? "var(--l-rust)" : "var(--l-muted)",
+                  }}
+                >
+                  {connected && <span className="l-dot" style={{ background: "var(--l-rust)" }} />}
+                  {connected ? `${githubConnected} connected` : "connect"}
+                </span>
+              </div>
+              <p className="mt-3 text-[13px] leading-relaxed l-t-2">{i.unlocks}</p>
+              <p className="mt-3 text-[10px] tracking-[0.16em] uppercase l-t-muted">
+                {SCOPE_LABEL[i.scope]}
+              </p>
+            </button>
+          );
+        })}
 
         {soon.map((i) => (
           <ComingSoon key={i.key} integration={i} />
@@ -57,18 +75,17 @@ export default function SourcesGrid({
 function ComingSoon({ integration }: { integration: Integration }) {
   return (
     <div
-      className="border border-neutral-800 rounded p-3 opacity-70"
+      className="rounded-[14px] border border-dashed p-5"
+      style={{ borderColor: "var(--l-rule)" }}
       aria-disabled
       title="Not available yet"
     >
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-neutral-300">{integration.name}</span>
-        <span className="text-[10px] text-neutral-500 border border-neutral-700 rounded px-1.5 py-0.5">
-          soon
-        </span>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[16px] l-t-muted">{integration.name}</span>
+        <span className="text-[10px] tracking-[0.16em] uppercase l-t-muted">soon</span>
       </div>
-      <p className="text-xs text-neutral-500 mt-1">{integration.unlocks}</p>
-      <p className="text-[10px] text-neutral-600 mt-1">
+      <p className="mt-3 text-[13px] leading-relaxed l-t-muted">{integration.unlocks}</p>
+      <p className="mt-3 text-[10px] tracking-[0.16em] uppercase l-t-muted">
         will be {SCOPE_LABEL[integration.scope]}
       </p>
     </div>

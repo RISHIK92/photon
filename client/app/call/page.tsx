@@ -1,27 +1,38 @@
 "use client";
 
 import "@livekit/components-styles";
-import { useCallback, useEffect, useState } from "react";
-import { LiveKitRoom, VideoConference } from "@livekit/components-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import { AgentAnswer } from "@/lib/evidence";
 import { getWorkspaceId } from "@/lib/api";
-import EvidencePanel from "./EvidencePanel";
-import WorkspaceSummary from "./WorkspaceSummary";
 import CaptionsBridge from "./CaptionsBridge";
-import PokeButton from "./PokeButton";
+import CaptionsOverlay from "./CaptionsOverlay";
 import CallSetup from "./CallSetup";
+import CallControls from "./CallControls";
 import ConnectSourcePrompt from "./ConnectSourcePrompt";
-import CaptionsPanel from "./CaptionsPanel";
+import RoomStage from "./RoomStage";
+import AskPanel from "./AskPanel";
+import ChatPanel from "./ChatPanel";
+import CodePanel from "./CodePanel";
 import TraceBridge from "./TraceBridge";
 import AdvancedPanel from "./AdvancedPanel";
 import { mergeCaption, type Caption } from "@/lib/captions";
 import { applyTraceEvent, type TraceEvent, type TurnTrace } from "@/lib/trace";
 import { createConfiguredMeeting, getToken, transcriptUrl } from "@/lib/api";
+import WaitingRoom from "./WaitingRoom";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
 type ConnState = "idle" | "connecting" | "connected" | "error";
 type Turn = { role: "user" | "agent"; question?: string; result?: AgentAnswer };
+// The trace tab is not in the strip: it is reached from the overflow menu, so
+// a live support call is not fronted by a debugging view.
+type Tab = "ask" | "chat" | "code" | "trace";
+const TABS: { key: Tab; label: string }[] = [
+  { key: "ask", label: "Ask" },
+  { key: "chat", label: "Chat" },
+  { key: "code", label: "Code" },
+];
 type TokenData = { url: string; token: string };
 
 export default function CallPage() {
@@ -33,6 +44,12 @@ export default function CallPage() {
   // Which source the user asked to connect, if any. Held here rather than
   // inside CallSetup because accepting navigates away from the call.
   const [connectPrompt, setConnectPrompt] = useState<string | null>(null);
+  // Admission proof from /call/{slug}: the code alone gets a guest to the
+  // door, and someone inside opens it. The token route verifies this
+  // server-side, so it is passed through rather than trusted here.
+  const [knockId, setKnockId] = useState<string | null>(null);
+  const [autoJoin, setAutoJoin] = useState(false);
+  const autoJoined = useRef(false);
 
   // Whether someone is signed in can only be known on the client
   // (localStorage), so it starts false and is set after mount. Reading it
@@ -43,9 +60,24 @@ export default function CallPage() {
   // Returning from "Connect now" lands here with the original code, so the
   // user rejoins the same meeting instead of losing the one they set up.
   useEffect(() => {
-    setSignedIn(!!getToken());
-    const code = new URLSearchParams(window.location.search).get("code");
-    if (code) setMeetingCode(code);
+    // Deferred a frame rather than set from the effect body: both of these
+    // change what the lobby renders, and a cascading render on mount is what
+    // the rule is warning about.
+    const id = requestAnimationFrame(() => {
+      const authed = !!getToken();
+      setSignedIn(authed);
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const knock = params.get("knock");
+      const name = params.get("name");
+      if (code) setMeetingCode(code);
+      if (knock) setKnockId(knock);
+      if (name) setIdentity(name);
+      // Arriving from the join link with the door already open — asking for
+      // the code and the name again would be asking twice.
+      if (code && (knock || authed)) setAutoJoin(true);
+    });
+    return () => cancelAnimationFrame(id);
   }, []);
   const [state, setState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +87,11 @@ export default function CallPage() {
   const [traces, setTraces] = useState<TurnTrace[]>([]);
   const [textInput, setTextInput] = useState("");
   const [textBusy, setTextBusy] = useState(false);
+  // The side panel is an overlay, so it has to be closable — the video is
+  // the page, everything else is on demand.
+  const [panel, setPanel] = useState<Tab | null>("ask");
+  const [captionsOn, setCaptionsOn] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   const connect = useCallback(
     async (config?: { bot_types: string[]; language_mode: string; enabled_sources: string[] }) => {
@@ -84,6 +121,7 @@ export default function CallPage() {
         }
 
         const params = new URLSearchParams({ room: code });
+        if (knockId) params.set("knock", knockId);
         if (!token) {
           if (!identity.trim()) {
             setError("Enter your name to join as a guest.");
@@ -105,7 +143,7 @@ export default function CallPage() {
         setState("error");
       }
     },
-    [identity, meetingCode]
+    [identity, meetingCode, knockId]
   );
 
   const onDisconnected = useCallback(() => {
@@ -215,8 +253,26 @@ export default function CallPage() {
     }
   }, [textInput, textBusy, onTraceEvent, meetingCode]);
 
+  // Fires once: connect() is async, so this never updates state
+  // synchronously from the effect body.
+  useEffect(() => {
+    if (!autoJoin || autoJoined.current || !meetingCode) return;
+    autoJoined.current = true;
+    connect();
+  }, [autoJoin, meetingCode, connect]);
+
+  const openTab = useCallback((tab: Tab) => setPanel((prev) => (prev === tab ? null : tab)), []);
+
+  const copyCode = useCallback(() => {
+    navigator.clipboard?.writeText(meetingCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  }, [meetingCode]);
+
+  const inRoom = state === "connected" && tokenData;
+
   return (
-    <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
+    <div className="l-landing flex h-screen flex-col overflow-hidden">
       {connectPrompt && (
         <ConnectSourcePrompt
           sourceLabel={connectPrompt.replace(/_/g, " ")}
@@ -231,141 +287,258 @@ export default function CallPage() {
           onLater={() => setConnectPrompt(null)}
         />
       )}
-      <header className="border-b border-neutral-800 px-6 py-4 shrink-0">
-        <h1 className="text-lg font-semibold">Photon call</h1>
-        <p className="text-sm text-neutral-400">
-          Press <span className="text-neutral-200">Ask Photon</span> to address the agent — it
-          answers the person who asked, so side conversations stay private.
-        </p>
-      </header>
 
-      <main className="flex-1 grid grid-cols-1 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-6 p-6 min-h-0 overflow-hidden">
-        {/* The pre-call setup is taller than the viewport on a laptop, and
-            the page itself is overflow-hidden so the two panes stay
-            independent — so this pane scrolls on its own. */}
-        <section className="flex flex-col gap-3 min-h-0 overflow-y-auto">
-          {state !== "connected" || !tokenData ? (
-            <div className="flex flex-col gap-6">
-              {signedIn && !meetingCode.trim() ? (
-                <CallSetup
-                  busy={state === "connecting"}
-                  onConnectSource={(key) => setConnectPrompt(key)}
-                  onStart={(config) => connect(config)}
-                />
-              ) : null}
+      {!inRoom ? (
+        <Lobby
+          signedIn={signedIn}
+          state={state}
+          error={error}
+          identity={identity}
+          meetingCode={meetingCode}
+          onIdentity={setIdentity}
+          onMeetingCode={setMeetingCode}
+          onConnectSource={(key) => setConnectPrompt(key)}
+          onStart={connect}
+        />
+      ) : (
+        <LiveKitRoom
+          serverUrl={tokenData.url}
+          token={tokenData.token}
+          connect
+          audio
+          video={false}
+          data-lk-theme="default"
+          onDisconnected={onDisconnected}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <RoomAudioRenderer />
 
-              <div className="flex flex-col gap-3 max-w-sm">
-                <p className="text-xs uppercase tracking-wide text-neutral-500">
-                  {signedIn ? "or join an existing call" : "join a call"}
-                </p>
-                <input
-                  className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm font-mono"
-                  placeholder="Meeting code (abcd-efgh)"
-                  value={meetingCode}
-                  onChange={(e) => setMeetingCode(e.target.value)}
-                />
-                {!signedIn && (
-                  <input
-                    className="bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
-                    placeholder="Your name"
-                    value={identity}
-                    onChange={(e) => setIdentity(e.target.value)}
-                  />
-                )}
-                <button
-                  onClick={() => connect()}
-                  disabled={state === "connecting" || !meetingCode.trim()}
-                  className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 rounded px-4 py-2 text-sm font-medium"
-                >
-                  {state === "connecting" ? "Connecting…" : "Join with code"}
-                </button>
-                {error && <p className="text-red-400 text-sm">{error}</p>}
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* The actual meeting room — real video tiles, screen-share
-                  viewer, and mic/camera/screen-share/leave controls, all
-                  from LiveKit's own prefab rather than a hand-rolled
-                  hidden-audio div. This is what makes it look like a call. */}
-              <div className="flex items-center gap-3 shrink-0 text-sm">
-                <span className="text-neutral-500">Meeting code</span>
-                <code className="bg-neutral-900 border border-neutral-800 rounded px-2 py-1 font-mono">
-                  {meetingCode}
-                </code>
-                <button
-                  onClick={() => navigator.clipboard?.writeText(meetingCode)}
-                  className="text-xs text-neutral-400 hover:text-neutral-100"
-                >
-                  copy
-                </button>
-                <a
-                  href={transcriptUrl(meetingCode)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-indigo-400 hover:text-indigo-300 ml-auto"
-                >
-                  transcript ↗
-                </a>
-              </div>
-              <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-neutral-800 relative">
-                <LiveKitRoom
-                  serverUrl={tokenData.url}
-                  token={tokenData.token}
-                  connect
-                  audio
-                  video={false}
-                  data-lk-theme="default"
-                  onDisconnected={onDisconnected}
-                  style={{ height: "100%" }}
-                >
-                  <VideoConference />
-                  <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                    <PokeButton />
-                  </div>
-                  <CaptionsBridge onCaption={onCaption} />
-                  <TraceBridge onEvent={onVoiceTraceEvent} />
-                </LiveKitRoom>
-              </div>
-
-            </>
-          )}
-
-          {/* Transcript and the advanced pipeline view side by side — what
-              was said on the left, what the agent did about it on the
-              right, sharing one timeline. Outside the connected branch on
-              purpose: the text fallback works without joining the call, and
-              its pipeline is worth watching either way. */}
-          <div className="shrink-0 grid grid-cols-1 lg:grid-cols-2 gap-4 mt-auto">
-            <CaptionsPanel captions={captions} connected={state === "connected"} />
-            <AdvancedPanel turns={traces} />
-          </div>
-
-        </section>
-
-        <section className="flex flex-col min-h-0 h-full bg-neutral-900/30 border border-neutral-800 rounded-lg p-4">
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            {turns.length === 0 ? <WorkspaceSummary /> : <EvidencePanel turns={turns} />}
-          </div>
-
-          <div className="flex gap-2 mt-4 pt-4 border-t border-neutral-800 shrink-0">
-            <input
-              className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
-              placeholder="Ask a question…"
-              value={textInput}
-              onChange={(e) => setTextInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && askByText()}
-            />
-            <button
-              onClick={askByText}
-              disabled={textBusy}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
+          <header
+            className="flex shrink-0 items-center gap-4 border-b px-6 py-3"
+            style={{ borderColor: "var(--l-rule)" }}
+          >
+            <span
+              className="text-[22px] leading-none italic"
+              style={{ fontFamily: "var(--font-display)", color: "var(--l-ink)" }}
             >
-              {textBusy ? "Asking…" : "Ask"}
+              photon
+            </span>
+            <span className="h-4 w-px" style={{ background: "var(--l-rule)" }} />
+            <button
+              onClick={copyCode}
+              className="font-mono text-[13px] tracking-[0.12em] l-quiet"
+              title="Copy the meeting code"
+            >
+              {copied ? "copied" : meetingCode}
             </button>
+            <div className="flex-1" />
+            <div className="hidden items-center gap-1 md:flex">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => openTab(t.key)}
+                  className="rounded-full px-4 py-1.5 text-[11px] tracking-[0.18em] uppercase transition-colors"
+                  style={{
+                    background: panel === t.key ? "var(--l-ink)" : "transparent",
+                    color: panel === t.key ? "var(--l-paper)" : "var(--l-muted)",
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </header>
+
+          <div className="flex min-h-0 flex-1">
+            {/* the stage: video is the page, and the panel slides over it */}
+            <div className="relative min-w-0 flex-1" style={{ background: "#141413" }}>
+              <RoomStage />
+              <CaptionsOverlay captions={captions} visible={captionsOn} />
+              <CallControls
+                captionsOn={captionsOn}
+                onToggleCaptions={() => setCaptionsOn((v) => !v)}
+                onToggleChat={() => openTab("chat")}
+                onOpenAdvanced={() => setPanel("trace")}
+                onCopyCode={copyCode}
+                transcriptHref={transcriptUrl(meetingCode)}
+                onLeave={onDisconnected}
+              />
+              {signedIn && <WaitingRoom slug={meetingCode} />}
+              <CaptionsBridge onCaption={onCaption} />
+              <TraceBridge onEvent={onVoiceTraceEvent} />
+            </div>
+
+            <aside
+              className="shrink-0 overflow-hidden border-l transition-[width] duration-500"
+              style={{
+                width: panel ? "min(30rem, 40vw)" : 0,
+                borderColor: panel ? "var(--l-rule)" : "transparent",
+                transitionTimingFunction: "cubic-bezier(.16,1,.3,1)",
+                background: "rgba(255,253,248,.72)",
+              }}
+            >
+              <div className="flex h-full w-[min(30rem,40vw)] flex-col">
+                <div
+                  className="flex shrink-0 items-center gap-1 border-b px-4 py-3"
+                  style={{ borderColor: "var(--l-rule)" }}
+                >
+                  {[...TABS, ...(panel === "trace" ? [{ key: "trace" as Tab, label: "Trace" }] : [])].map(
+                    (t) => (
+                      <button
+                        key={t.key}
+                        onClick={() => setPanel(t.key)}
+                        className="rounded-full px-3.5 py-1.5 text-[11px] tracking-[0.16em] uppercase transition-colors"
+                        style={{
+                          background: panel === t.key ? "rgba(28,25,23,.06)" : "transparent",
+                          color: panel === t.key ? "var(--l-ink)" : "var(--l-muted)",
+                        }}
+                      >
+                        {t.label}
+                      </button>
+                    ),
+                  )}
+                  <div className="flex-1" />
+                  <button
+                    onClick={() => setPanel(null)}
+                    aria-label="Close panel"
+                    className="text-[16px] leading-none l-quiet"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1">
+                  {panel === "ask" && (
+                    <AskPanel
+                      turns={turns}
+                      value={textInput}
+                      busy={textBusy}
+                      onChange={setTextInput}
+                      onAsk={askByText}
+                    />
+                  )}
+                  {panel === "chat" && <ChatPanel />}
+                  {panel === "code" && <CodePanel turns={turns} />}
+                  {panel === "trace" && (
+                    <div className="h-full overflow-y-auto px-5 py-4">
+                      <AdvancedPanel turns={traces} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </aside>
           </div>
-        </section>
-      </main>
+        </LiveKitRoom>
+      )}
+    </div>
+  );
+}
+
+/** Before the call: one screen that either starts a call or joins one. */
+function Lobby({
+  signedIn,
+  state,
+  error,
+  identity,
+  meetingCode,
+  onIdentity,
+  onMeetingCode,
+  onConnectSource,
+  onStart,
+}: {
+  signedIn: boolean;
+  state: ConnState;
+  error: string | null;
+  identity: string;
+  meetingCode: string;
+  onIdentity: (v: string) => void;
+  onMeetingCode: (v: string) => void;
+  onConnectSource: (key: string) => void;
+  onStart: (config?: {
+    bot_types: string[];
+    language_mode: string;
+    enabled_sources: string[];
+  }) => void;
+}) {
+  const joining = meetingCode.trim().length > 0;
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto grid max-w-6xl gap-14 px-6 py-14 md:grid-cols-[1fr_26rem] md:px-10">
+        <div>
+          <div className="flex items-center gap-4">
+            <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
+            <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">
+              {signedIn ? "Start or join a call" : "Join a call"}
+            </span>
+            <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
+          </div>
+
+          <h1
+            className="mt-8 text-[clamp(30px,4vw,48px)] leading-[1.1]"
+            style={{ color: "var(--l-ink)" }}
+          >
+            Bring it{" "}
+            <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
+              onto the call
+            </span>
+            .
+          </h1>
+          <p className="mt-5 max-w-md text-[15px] leading-relaxed l-t-2">
+            Press <span style={{ color: "var(--l-ink)" }}>Ask Photon</span> and it listens to
+            you — and only you — for forty-five seconds. Side conversation stays private, and
+            the answer comes back cited, in the language you asked in.
+          </p>
+
+          {signedIn && !joining && (
+            <div className="mt-12">
+              <CallSetup
+                busy={state === "connecting"}
+                onConnectSource={onConnectSource}
+                onStart={onStart}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="l-sheet h-fit p-6">
+          <p className="text-[10px] tracking-[0.26em] uppercase l-t-muted">
+            {signedIn ? "Or join with a code" : "Meeting code"}
+          </p>
+          <input
+            className="l-input mt-4 font-mono tracking-[0.12em]"
+            placeholder="abcd-efgh"
+            value={meetingCode}
+            onChange={(e) => onMeetingCode(e.target.value)}
+          />
+          {!signedIn && (
+            <input
+              className="l-input mt-3"
+              placeholder="Your name"
+              value={identity}
+              onChange={(e) => onIdentity(e.target.value)}
+            />
+          )}
+          <button
+            onClick={() => onStart()}
+            disabled={state === "connecting" || !meetingCode.trim()}
+            className="l-btn mt-5 w-full"
+          >
+            {state === "connecting" ? "Connecting…" : "Join with code"}
+          </button>
+          {error && (
+            <p
+              className="l-note mt-5 pl-4 text-[13px] l-t-2"
+              style={{ borderLeft: "1px solid var(--l-rust)" }}
+            >
+              {error}
+            </p>
+          )}
+          <p className="mt-6 text-[12px] leading-relaxed l-t-muted">
+            A code has no 0, O, 1, l or I in it — the first thing anyone does with one is read
+            it aloud. Guests do not need an account.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

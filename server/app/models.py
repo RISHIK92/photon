@@ -45,6 +45,23 @@ class UserRead(SQLModel):
 # data is far more expensive than carrying it now.
 
 
+class WorkspaceKind(str, Enum):
+    """What a workspace IS, chosen when it is created.
+
+    INDIVIDUAL — one person's own context. No invites, no members to
+                 manage; the connectors and documents in it are theirs.
+    TEAM       — shared. Members are invited and approved, and every
+                 connector added to it is readable by everyone in it.
+
+    The distinction is asked up front rather than inferred, because the
+    answer changes what "connect Slack" MEANS: in a team workspace it
+    exposes that Slack to everyone who is ever admitted, and someone
+    connecting a personal account should know which of those they are doing.
+    """
+    INDIVIDUAL = "individual"
+    TEAM = "team"
+
+
 class WorkspaceRole(str, Enum):
     """Ordered least- to most-privileged; see core/workspace.py:role_at_least.
 
@@ -62,6 +79,7 @@ class Workspace(SQLModel, table=True):
     __tablename__ = "workspaces"
     id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str
+    kind: WorkspaceKind = WorkspaceKind.INDIVIDUAL
     # True for the workspace auto-created on signup, so the UI can label it
     # and never offer to delete a user's only home.
     is_personal: bool = False
@@ -134,11 +152,13 @@ class JoinRequestRead(SQLModel):
 
 class WorkspaceCreate(SQLModel):
     name: str
+    kind: WorkspaceKind = WorkspaceKind.TEAM
 
 
 class WorkspaceRead(SQLModel):
     id: str
     name: str
+    kind: WorkspaceKind = WorkspaceKind.INDIVIDUAL
     is_personal: bool
     role: WorkspaceRole
     created_at: datetime
@@ -374,6 +394,42 @@ class Meeting(SQLModel, table=True):
     # meaningful (agent has nothing) and is NOT the same as null (use the
     # workspace defaults), which is why it is nullable.
     enabled_sources: Optional[list] = Field(default=None, sa_column=Column(JSON))
+
+
+class KnockStatus(str, Enum):
+    PENDING = "pending"
+    ADMITTED = "admitted"
+    DENIED = "denied"
+
+
+class MeetingKnock(SQLModel, table=True):
+    """Someone asking to be let into a call.
+
+    A meeting code is shareable — that is the point — but a shared link
+    forwarded one hop too far should not put a stranger into a live customer
+    call. So the code gets you to the door; someone already inside opens it.
+
+    Workspace members skip this: they are already trusted with the
+    workspace's data, and making colleagues queue to join their own team's
+    call is friction that teaches people to admit anyone without looking.
+    """
+    __tablename__ = "meeting_knocks"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    meeting_id: str = Field(sa_column=Column(String, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True))
+    display_name: str
+    user_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    status: KnockStatus = KnockStatus.PENDING
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    decided_at: Optional[datetime] = None
+    decided_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+
+
+class KnockRead(SQLModel):
+    id: str
+    display_name: str
+    status: KnockStatus
+    created_at: datetime
+    is_member: bool = False
 
 
 class TranscriptRole(str, Enum):

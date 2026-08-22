@@ -4,12 +4,12 @@ import { useState } from "react";
 import { languageFor, parseLocator, tokenizeLine, type TokenKind } from "@/lib/highlight";
 
 const COLOR: Record<TokenKind, string> = {
-  plain: "text-neutral-300",
-  keyword: "text-violet-300",
-  string: "text-emerald-300",
-  comment: "text-neutral-500 italic",
-  number: "text-amber-200",
-  function: "text-sky-300",
+  plain: "text-[color:var(--l-ink-2)]",
+  keyword: "text-[#7c3aed]",
+  string: "text-[color:var(--l-rust)]",
+  comment: "text-[color:var(--l-muted)] italic",
+  number: "text-[color:var(--l-terra)]",
+  function: "text-[#0369a1]",
 };
 
 /** Code evidence, rendered as code.
@@ -54,16 +54,16 @@ export default function CodeSnippet({
   };
 
   return (
-    <div className="border border-neutral-800 rounded-lg overflow-hidden bg-neutral-950">
-      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-neutral-800 bg-neutral-900/60">
-        <span className="text-[11px] font-mono text-neutral-400 truncate flex-1" title={locator}>
+    <div className="border border-[color:var(--l-rule)] rounded-lg overflow-hidden bg-[color:var(--l-paper)]">
+      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-[color:var(--l-rule)] bg-[rgba(28,25,23,.03)]">
+        <span className="text-[11px] font-mono text-[color:var(--l-ink-2)] truncate flex-1" title={locator}>
           {path}
-          {startLine !== null && <span className="text-neutral-600">:{startLine}</span>}
+          {startLine !== null && <span className="text-[color:var(--l-muted)]">:{startLine}</span>}
         </span>
-        {language && <span className="text-[10px] text-neutral-600">{language}</span>}
+        {language && <span className="text-[10px] text-[color:var(--l-muted)]">{language}</span>}
         <button
           onClick={copy}
-          className="text-[10px] text-neutral-500 hover:text-neutral-200 shrink-0"
+          className="text-[10px] text-[color:var(--l-muted)] hover:text-[color:var(--l-ink)] shrink-0"
         >
           {copied ? "copied" : "copy"}
         </button>
@@ -72,8 +72,8 @@ export default function CodeSnippet({
       <div className="overflow-x-auto">
         <pre className="text-[11px] leading-[1.5] py-1.5 font-mono">
           {shown.map((line, i) => (
-            <div key={i} className="flex hover:bg-neutral-900/60 px-2">
-              <span className="select-none text-neutral-700 text-right pr-3 w-10 shrink-0 tabular-nums">
+            <div key={i} className="flex hover:bg-[rgba(28,25,23,.03)] px-2">
+              <span className="select-none text-[color:var(--l-muted)] text-right pr-3 w-10 shrink-0 tabular-nums">
                 {startLine !== null ? startLine + i : i + 1}
               </span>
               <code className="whitespace-pre">
@@ -91,7 +91,7 @@ export default function CodeSnippet({
       {hidden > 0 && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="w-full text-[11px] text-neutral-500 hover:text-neutral-200 py-1 border-t border-neutral-800"
+          className="w-full text-[11px] text-[color:var(--l-muted)] hover:text-[color:var(--l-ink)] py-1 border-t border-[color:var(--l-rule)]"
         >
           {expanded ? "show less" : `show ${hidden} more line${hidden === 1 ? "" : "s"}`}
         </button>

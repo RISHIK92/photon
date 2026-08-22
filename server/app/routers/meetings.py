@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -21,7 +21,10 @@ from app.core.auth import get_current_user
 from app.core.workspace import get_current_workspace, membership_for, require_role
 from app.database import get_session
 from app.models import (
+    KnockRead,
+    KnockStatus,
     Meeting,
+    MeetingKnock,
     MeetingRead,
     TranscriptEntry,
     TranscriptEntryCreate,
@@ -116,6 +119,32 @@ async def list_meetings(
         .limit(50)
     )
     return result.scalars().all()
+
+
+async def _optional_user(session: AsyncSession, authorization: Optional[str]) -> Optional[User]:
+    """Resolve a bearer token if one was sent, without requiring one.
+
+    The knock endpoint has to serve both a signed-in colleague and an
+    external client with no account, so authentication here is a fact to
+    establish rather than a gate to pass.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    from jose import JWTError, jwt
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    try:
+        payload = jwt.decode(
+            authorization.split(" ", 1)[1],
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except JWTError:
+        return None
+    user_id = payload.get("sub")
+    return await session.get(User, user_id) if user_id else None
 
 
 async def _meeting_by_slug(session: AsyncSession, slug: str) -> Meeting:
@@ -318,3 +347,147 @@ async def call_config(slug: str, session: AsyncSession = Depends(get_session)):
         "voice_stack": "sarvam" if (meeting.language_mode or "english") == "multilingual" else "deepgram",
         "enabled_sources": meeting.enabled_sources,
     }
+
+
+# ── Waiting room ─────────────────────────────────────────────────────────
+
+
+class KnockBody(SQLModel):
+    display_name: str = ""
+
+
+@router.post("/{slug}/knock")
+async def knock(
+    slug: str,
+    payload: KnockBody,
+    session: AsyncSession = Depends(get_session),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Ask to be let into a call.
+
+    Deliberately open to unauthenticated callers — external clients join
+    support calls by link and have no account here. What identifies them is
+    the name they give, and the fact that a human inside the call has to
+    approve it.
+
+    A signed-in workspace MEMBER is admitted immediately: they already have
+    access to everything in the call, so a queue would only teach people to
+    click Admit without reading it.
+    """
+    meeting = await _meeting_by_slug(session, slug)
+
+    user = await _optional_user(session, authorization)
+    if user and await membership_for(session, meeting.workspace_id, user.id):
+        record = MeetingKnock(
+            meeting_id=meeting.id,
+            display_name=payload.display_name.strip() or user.email,
+            user_id=user.id,
+            status=KnockStatus.ADMITTED,
+            decided_at=datetime.utcnow(),
+        )
+        session.add(record)
+        await session.commit()
+        await session.refresh(record)
+        return {"id": record.id, "status": record.status, "reason": "workspace member"}
+
+    # A signed-in user always has a name we can show, even when they are
+    # not a member of this workspace — asking them to type it again just to
+    # queue is friction for nothing. Only true strangers must introduce
+    # themselves.
+    name = payload.display_name.strip() or (user.email if user else "")
+    if not name:
+        raise HTTPException(status_code=422, detail="Enter your name so someone can let you in")
+
+    record = MeetingKnock(
+        meeting_id=meeting.id, display_name=name, user_id=user.id if user else None
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return {"id": record.id, "status": record.status}
+
+
+@router.get("/{slug}/knock/{knock_id}")
+async def knock_status(
+    slug: str, knock_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Polled by whoever is waiting. Returns only their own status — it
+    reveals nothing about the call or who else is in it."""
+    meeting = await _meeting_by_slug(session, slug)
+    record = await session.get(MeetingKnock, knock_id)
+    if not record or record.meeting_id != meeting.id:
+        raise HTTPException(status_code=404, detail="No such request")
+    return {"id": record.id, "status": record.status}
+
+
+@router.get("/{slug}/knocks", response_model=list[KnockRead])
+async def pending_knocks(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Who is waiting. Members only — the list is people's names."""
+    meeting = await _meeting_by_slug(session, slug)
+    if not await membership_for(session, meeting.workspace_id, current_user.id):
+        raise HTTPException(status_code=404, detail="No meeting with that code")
+
+    result = await session.execute(
+        select(MeetingKnock)
+        .where(MeetingKnock.meeting_id == meeting.id, MeetingKnock.status == KnockStatus.PENDING)
+        .order_by(MeetingKnock.created_at)
+    )
+    return [
+        KnockRead(
+            id=k.id, display_name=k.display_name, status=k.status,
+            created_at=k.created_at, is_member=k.user_id is not None,
+        )
+        for k in result.scalars().all()
+    ]
+
+
+class DecideKnockBody(SQLModel):
+    admit: bool
+
+
+@router.post("/{slug}/knocks/{knock_id}")
+async def decide_knock(
+    slug: str,
+    knock_id: str,
+    payload: DecideKnockBody,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Admit or deny. Any workspace member on the call can decide — waiting
+    for one specific person while a customer sits outside is worse than
+    trusting the colleagues already in the room."""
+    meeting = await _meeting_by_slug(session, slug)
+    if not await membership_for(session, meeting.workspace_id, current_user.id):
+        raise HTTPException(status_code=404, detail="No meeting with that code")
+
+    record = await session.get(MeetingKnock, knock_id)
+    if not record or record.meeting_id != meeting.id:
+        raise HTTPException(status_code=404, detail="No such request")
+    if record.status != KnockStatus.PENDING:
+        return {"id": record.id, "status": record.status}
+
+    record.status = KnockStatus.ADMITTED if payload.admit else KnockStatus.DENIED
+    record.decided_at = datetime.utcnow()
+    record.decided_by = current_user.id
+    session.add(record)
+    await session.commit()
+    return {"id": record.id, "status": record.status}
+
+
+@router.get("/{slug}/admission/{knock_id}")
+async def verify_admission(
+    slug: str, knock_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Checked by the token minter before it issues a join token.
+
+    The waiting room is only real if the token cannot be obtained without
+    passing through it.
+    """
+    meeting = await _meeting_by_slug(session, slug)
+    record = await session.get(MeetingKnock, knock_id)
+    admitted = bool(record and record.meeting_id == meeting.id and record.status == KnockStatus.ADMITTED)
+    return {"admitted": admitted, "display_name": record.display_name if record else None}

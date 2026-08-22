@@ -1,9 +1,8 @@
 import Chrome from "./_landing/Chrome";
 import Hero from "./_landing/Hero";
-import AnswerZoom from "./_landing/AnswerZoom";
 import TurnStrip from "./_landing/TurnStrip";
 import Languages from "./_landing/Languages";
-import { Closing, Features, Footer, Rules, Sources, Statement } from "./_landing/Sections";
+import { Closing, Features, Footer, Hiring, Rules, Sources, Statement } from "./_landing/Sections";
 
 /**
  * Landing page. Signed-in visitors are not redirected away any more — the
@@ -16,9 +15,9 @@ export default function Home() {
       <Chrome />
       <Hero />
       <Statement />
-      <AnswerZoom />
       <TurnStrip />
       <Languages />
+      <Hiring />
       <Features />
       <Sources />
       <Rules />

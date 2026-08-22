@@ -39,44 +39,47 @@ export default function ConnectGithubDialog({
   const blockedForOrgs = info ? !info.org_install_supported : false;
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-start justify-center overflow-y-auto p-6 z-50">
-      <div className="bg-neutral-950 border border-neutral-800 rounded-lg max-w-2xl w-full p-6 my-8">
+    <div className="l-tokens l-scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-6">
+      <div className="l-sheet my-8 w-full max-w-2xl p-6">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h2 className="text-lg font-semibold">Connect GitHub</h2>
-            <p className="text-sm text-neutral-400">
+            <h2 className="text-[19px]">Connect GitHub</h2>
+            <p className="text-[13px] l-t-2">
               Here&apos;s what happens, before you leave for GitHub.
             </p>
           </div>
-          <button onClick={onCancel} className="text-neutral-500 hover:text-neutral-200 text-sm">
+          <button onClick={onCancel} className="text-[12px] uppercase tracking-[0.14em] l-quiet">
             close
           </button>
         </div>
 
-        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
-        {!info && !error && <p className="text-sm text-neutral-500">Checking the app…</p>}
+        {error && <p className="text-[13px] l-t-rust mb-4">{error}</p>}
+        {!info && !error && <p className="text-[13px] l-t-muted">Checking the app…</p>}
 
         {info && (
           <>
             {blockedForOrgs && (
-              <div className="border border-amber-600/50 bg-amber-500/5 rounded p-3 mb-4 text-sm">
-                <p className="text-amber-300 font-medium mb-1">
+              <div
+                className="mb-4 rounded-xl p-4 text-[13px]"
+                style={{ background: "rgba(180,83,9,.05)", border: "1px solid rgba(180,83,9,.28)" }}
+              >
+                <p className="mb-1 l-t-rust">
                   Installing on an organization needs one change first
                 </p>
-                <p className="text-neutral-300">
+                <p className="l-t-2">
                   This app is owned by{" "}
                   <span className="font-mono">@{info.owner_login}</span> (a personal account) and is
                   private, so GitHub will only offer that account as an install target — an
                   organization like a private company org won&apos;t appear in the list.
                 </p>
-                <p className="text-neutral-400 mt-2">To install it on an organization, either:</p>
-                <ul className="list-disc ml-5 mt-1 text-neutral-400 space-y-1">
+                <p className="l-t-2 mt-2">To install it on an organization, either:</p>
+                <ul className="list-disc ml-5 mt-1 l-t-2 space-y-1">
                   <li>
-                    <span className="text-neutral-200">Transfer it to the org</span> — keeps it
+                    <span className="l-t-ink">Transfer it to the org</span> — keeps it
                     private and correctly scoped. You must be an owner of that org.
                   </li>
                   <li>
-                    <span className="text-neutral-200">Make it public</span> — quicker, but then
+                    <span className="l-t-ink">Make it public</span> — quicker, but then
                     anyone with the link can install it.
                   </li>
                 </ul>
@@ -84,11 +87,11 @@ export default function ConnectGithubDialog({
                   href={`${info.settings_url}#advanced`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-block mt-2 text-indigo-400 hover:text-indigo-300"
+                  className="inline-block mt-2 l-t-rust"
                 >
                   Open app settings → Advanced ↗
                 </a>
-                <p className="text-neutral-500 mt-2 text-xs">
+                <p className="l-t-muted mt-2 text-xs">
                   Installing on your personal account works right now without any of this.
                 </p>
               </div>
@@ -100,13 +103,13 @@ export default function ConnectGithubDialog({
                 request access to) appear.
               </Step>
               <Step n={2} title="Choose which repositories">
-                Pick <span className="text-neutral-200">Only select repositories</span> rather than
+                Pick <span className="l-t-ink">Only select repositories</span> rather than
                 all — you can add more later without reinstalling, and the picker here always shows
                 the current list.
               </Step>
               <Step n={3} title="Approve the permissions">
                 This app asks for{" "}
-                <span className="font-mono text-neutral-200">
+                <span className="font-mono l-t-ink">
                   {Object.entries(info.permissions)
                     .map(([k, v]) => `${k}: ${v}`)
                     .join(", ")}
@@ -119,9 +122,9 @@ export default function ConnectGithubDialog({
               </Step>
             </ol>
 
-            <div className="border border-neutral-800 rounded p-3 text-sm mb-4">
-              <p className="text-neutral-300 font-medium mb-1">What happens to the code</p>
-              <p className="text-neutral-400">
+            <div className="l-hair mb-4 rounded-xl border p-4 text-[13px]">
+              <p className="mb-1 l-t-ink">What happens to the code</p>
+              <p className="l-t-2">
                 Selected repos are cloned to this server, parsed, and split into chunks. Those
                 chunks are sent to the embedding provider to build the search index, and relevant
                 snippets are sent to the language model when someone asks a question. For a private
@@ -129,7 +132,7 @@ export default function ConnectGithubDialog({
               </p>
             </div>
 
-            <label className="flex items-start gap-2 text-sm text-neutral-300 mb-4">
+            <label className="flex items-start gap-2 text-[13px] l-t-2 mb-4">
               <input
                 type="checkbox"
                 checked={acknowledged}
@@ -143,13 +146,13 @@ export default function ConnectGithubDialog({
               <button
                 onClick={onConfirm}
                 disabled={!acknowledged || busy}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded px-4 py-2 text-sm font-medium"
+                className="l-btn"
               >
                 {busy ? "Opening GitHub…" : "Continue to GitHub"}
               </button>
               <button
                 onClick={onCancel}
-                className="text-sm text-neutral-400 hover:text-neutral-100"
+                className="text-[12px] uppercase tracking-[0.14em] l-quiet"
               >
                 Cancel
               </button>
@@ -164,12 +167,15 @@ export default function ConnectGithubDialog({
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="shrink-0 w-5 h-5 rounded-full bg-neutral-800 text-neutral-300 grid place-items-center text-xs">
+      <span
+        className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] l-t-rust"
+        style={{ border: "1px solid rgba(180,83,9,.35)" }}
+      >
         {n}
       </span>
       <span>
-        <span className="text-neutral-200">{title}</span>
-        <span className="text-neutral-400"> — {children}</span>
+        <span className="l-t-ink">{title}</span>
+        <span className="l-t-2"> — {children}</span>
       </span>
     </li>
   );

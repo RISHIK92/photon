@@ -5,10 +5,9 @@ import { useEffect, useState } from "react";
 import { useDocProgress, useSignedIn } from "./scroll";
 
 const LINKS = [
-  { href: "#answer", label: "The answer" },
   { href: "#turn", label: "A turn" },
   { href: "#languages", label: "Languages" },
-  { href: "#sources", label: "Sources" },
+  { href: "#hiring", label: "Instead of hiring" },
   { href: "#rules", label: "Rules" },
 ];
 

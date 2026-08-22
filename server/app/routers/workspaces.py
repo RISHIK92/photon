@@ -22,6 +22,7 @@ from app.core.workspace import (
 from app.database import get_session
 from app.models import (
     JoinRequestRead,
+    WorkspaceKind,
     JoinRequestStatus,
     User,
     Workspace,
@@ -53,7 +54,8 @@ async def list_workspaces(
     )
     return [
         WorkspaceRead(
-            id=w.id, name=w.name, is_personal=w.is_personal, role=role, created_at=w.created_at
+            id=w.id, name=w.name, kind=w.kind, is_personal=w.is_personal, role=role,
+            created_at=w.created_at,
         )
         for w, role in result.all()
     ]
@@ -65,7 +67,7 @@ async def create_workspace(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    workspace = Workspace(name=payload.name.strip(), is_personal=False)
+    workspace = Workspace(name=payload.name.strip(), kind=payload.kind, is_personal=False)
     session.add(workspace)
     await session.flush()
     session.add(
@@ -76,6 +78,7 @@ async def create_workspace(
     return WorkspaceRead(
         id=workspace.id,
         name=workspace.name,
+        kind=workspace.kind,
         is_personal=workspace.is_personal,
         role=WorkspaceRole.OWNER,
         created_at=workspace.created_at,
@@ -94,6 +97,7 @@ async def current_workspace(
     return WorkspaceRead(
         id=workspace.id,
         name=workspace.name,
+        kind=workspace.kind,
         is_personal=workspace.is_personal,
         role=member.role if member else WorkspaceRole.OWNER,
         created_at=workspace.created_at,
@@ -145,6 +149,16 @@ async def rotate_invite(
     for old in existing.scalars().all():
         old.revoked_at = datetime.utcnow()
         session.add(old)
+
+    if workspace.kind == WorkspaceKind.INDIVIDUAL:
+        # Refused rather than silently upgraded: turning someone's private
+        # workspace into a shared one is not a side effect of clicking
+        # "invite", and every connector in it would become readable by
+        # whoever accepts.
+        raise HTTPException(
+            status_code=409,
+            detail="This is an individual workspace — create a team workspace to invite people",
+        )
 
     invite = WorkspaceInvite(workspace_id=workspace.id, code=_new_code(), created_by=current_user.id)
     session.add(invite)

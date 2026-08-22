@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Reveal, RuleLabel, WordsReveal } from "./Reveal";
+import { useSignedIn } from "./scroll";
 
 const FEATURES = [
   {
@@ -36,6 +37,130 @@ const FEATURES = [
   },
 ];
 
+/**
+ * Hairline glyphs, 20x20, stroke-only so they sit on the paper like the
+ * rules do rather than like UI chrome.
+ */
+const GLYPH: Record<string, React.ReactNode> = {
+  ramp: (
+    <>
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M10 5.6V10l3 2" />
+    </>
+  ),
+  read: (
+    <>
+      <path d="M10 5.6c-1.6-1.1-3.4-1.4-5.4-1.1v9.9c2-.3 3.8 0 5.4 1.1 1.6-1.1 3.4-1.4 5.4-1.1V4.5c-2-.3-3.8 0-5.4 1.1Z" />
+      <path d="M10 5.6v9.9" />
+    </>
+  ),
+  hours: (
+    <>
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M10 2.8v14.4" />
+      <path d="M2.8 10h4M13.2 10h4" />
+    </>
+  ),
+  speed: (
+    <>
+      <circle cx="10" cy="11.4" r="6.2" />
+      <path d="M10 11.4 13 8.4" />
+      <path d="M7.8 2.9h4.4M10 2.9v2.3" />
+    </>
+  ),
+  tongue: (
+    <>
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M2.8 10h14.4" />
+      <path d="M10 2.8c1.9 2 2.9 4.5 2.9 7.2s-1 5.2-2.9 7.2c-1.9-2-2.9-4.5-2.9-7.2s1-5.2 2.9-7.2Z" />
+    </>
+  ),
+  leave: (
+    <>
+      <path d="M11.5 3.4H5.2A1.2 1.2 0 0 0 4 4.6v10.8a1.2 1.2 0 0 0 1.2 1.2h6.3" />
+      <path d="M13 7.2 15.8 10 13 12.8" />
+      <path d="M15.8 10H8.2" />
+    </>
+  ),
+  unknown: (
+    <>
+      <circle cx="10" cy="10" r="7.2" />
+      <path d="M7.9 8a2.1 2.1 0 1 1 2.9 2c-.6.3-.9.8-.9 1.5v.4" />
+      <path d="M10 14.4h.01" />
+    </>
+  ),
+};
+
+function Glyph({ name }: { name: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.15"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {GLYPH[name]}
+    </svg>
+  );
+}
+
+/** The three numbers that are actually measured, not argued. */
+const HIRE_STATS = [
+  { n: "17s", l: "to ingest a 236-file repo" },
+  { n: "1.47s", l: "median answer, on the call" },
+  { n: "4", l: "languages, picked per turn" },
+];
+
+const HIRE = [
+  {
+    g: "ramp",
+    q: "Time to the first useful answer",
+    human: "Weeks of onboarding, and months before the odd corners are known",
+    photon: "One ingest — about 17 seconds for a 236-file repo",
+  },
+  {
+    g: "read",
+    q: "How much of it has been read",
+    human: "Whatever there was time for, plus whoever was around to ask",
+    photon: "Every repo, doc, thread, ticket and incident you connect",
+  },
+  {
+    g: "hours",
+    q: "When it is available",
+    human: "Working hours, one conversation at a time",
+    photon: "Every call at once, in whichever room the code was read into",
+  },
+  {
+    g: "speed",
+    q: "How long the answer takes",
+    human: "“Let me check and get back to you”",
+    photon: "Under a second and a half, while the customer is still on the line",
+  },
+  {
+    g: "tongue",
+    q: "Languages on the call",
+    human: "Whichever ones you managed to hire for",
+    photon: "English, Hindi, Telugu and Tamil, picked per turn",
+  },
+  {
+    g: "leave",
+    q: "What happens when they leave",
+    human: "The context leaves with them",
+    photon: "The workspace keeps it; the next person inherits all of it",
+  },
+  {
+    g: "unknown",
+    q: "When it does not know",
+    human: "Sometimes guesses, and sounds confident doing it",
+    photon: "Abstains, says so out loud, and hands the call back to you",
+  },
+];
+
 const SOURCES = ["GitHub", "Slack", "Jira", "Linear", "Notion", "Datadog", "Tickets", "Incidents", "Runbooks", "Commits"];
 
 const RULES = [
@@ -60,10 +185,123 @@ export function Statement() {
             className="mt-10 max-w-2xl text-[16px] leading-relaxed"
             style={{ color: "var(--l-ink-2)" }}
           >
-            The person on the call does not have three minutes to find it, and the LLM that
-            has read none of it will happily invent something that sounds right. Photon
-            looks it up while you are still talking, and shows you exactly where it came
-            from.
+            The person on the call does not have three minutes to find it, the new hire
+            has not been here long enough to know it, and the LLM that has read none of
+            it will happily invent something that sounds right. Photon looks it up while
+            you are still talking, and shows you exactly where it came from.
+          </p>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+export function Hiring() {
+  return (
+    <section id="hiring" className="relative px-6 py-32 md:px-10 md:py-44">
+      <div className="mx-auto max-w-5xl">
+        <RuleLabel>Instead of hiring for it</RuleLabel>
+        <WordsReveal
+          text="The teammate who has already read everything."
+          serifWords={[6]}
+          className="mt-10 text-[clamp(30px,4.4vw,56px)] leading-[1.1]"
+          stagger={38}
+        />
+        <Reveal delay={200}>
+          <p className="mt-8 max-w-2xl text-[16px] leading-relaxed" style={{ color: "var(--l-ink-2)" }}>
+            Support and solutions engineering is mostly recall: knowing which commit
+            changed that behaviour, which thread decided it, which customer is on the
+            old plan. That knowledge takes months to build in a person and walks out
+            of the door with them. Photon is the part of the job that is recall — so
+            the people you do hire spend their time on the part that is judgement.
+          </p>
+        </Reveal>
+
+        {/* the measured numbers, before the qualitative rows */}
+        <div className="mt-14 grid gap-8 sm:grid-cols-3">
+          {HIRE_STATS.map((st, i) => (
+            <Reveal key={st.l} delay={i * 110}>
+              <div className="border-t pt-5" style={{ borderColor: "var(--l-rust)" }}>
+                <div
+                  className="leading-none"
+                  style={{ fontFamily: "var(--font-display)", fontSize: 46, color: "var(--l-ink)" }}
+                >
+                  {st.n}
+                </div>
+                <div className="mt-3 text-[12px] leading-relaxed" style={{ color: "var(--l-muted)" }}>
+                  {st.l}
+                </div>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+
+        <div className="mt-20">
+          <Reveal>
+            <div
+              className="hidden grid-cols-[28px_1.05fr_1fr_1fr] gap-6 border-b pb-4 md:grid"
+              style={{ borderColor: "var(--l-rule)" }}
+            >
+              <span />
+              <span />
+              <span className="text-[11px] tracking-[0.22em] uppercase" style={{ color: "var(--l-muted)" }}>
+                A new hire
+              </span>
+              <span
+                className="flex items-center gap-2 text-[11px] tracking-[0.22em] uppercase"
+                style={{ color: "var(--l-rust)" }}
+              >
+                <span className="l-dot" style={{ background: "var(--l-rust)" }} />
+                Photon
+              </span>
+            </div>
+          </Reveal>
+          {HIRE.map((r, i) => (
+            <Reveal key={r.q} delay={i * 70}>
+              <div
+                className="l-row group relative grid gap-x-6 gap-y-3 border-b py-6 md:grid-cols-[28px_1.05fr_1fr_1fr]"
+                style={{ borderColor: "var(--l-rule)" }}
+              >
+                {/* the rule under the row redraws itself in rust on hover */}
+                <span className="l-row-rule" style={{ background: "var(--l-rust)" }} />
+
+                <span className="l-row-glyph mt-0.5" style={{ color: "var(--l-muted)" }}>
+                  <Glyph name={r.g} />
+                </span>
+
+                <span className="text-[15px] leading-snug" style={{ color: "var(--l-ink)" }}>
+                  {r.q}
+                </span>
+
+                <span
+                  className="l-row-was text-[14px] leading-relaxed"
+                  style={{ color: "var(--l-muted)" }}
+                >
+                  {r.human}
+                </span>
+
+                <span
+                  className="flex gap-2 text-[14px] leading-relaxed"
+                  style={{ color: "var(--l-ink-2)" }}
+                >
+                  <span
+                    aria-hidden
+                    className="l-row-tick mt-[7px] h-px w-3 shrink-0"
+                    style={{ background: "var(--l-rust)" }}
+                  />
+                  {r.photon}
+                </span>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+
+        <Reveal delay={160}>
+          <p className="mt-10 max-w-2xl text-[14px] leading-relaxed" style={{ color: "var(--l-muted)" }}>
+            It is not a replacement for the person who decides what to do about the
+            answer. It is a replacement for the hour they would have spent finding it —
+            and it escalates the moment the evidence runs out, rather than filling the
+            gap with something plausible.
           </p>
         </Reveal>
       </div>
@@ -206,6 +444,10 @@ export function Rules() {
 }
 
 export function Closing() {
+  const signedIn = useSignedIn();
+  // Signed out, every product link is really a sign-in link — sending someone
+  // to /call or /dashboard first only bounces them.
+  const gate = (href: string) => (signedIn ? href : "/login");
   return (
     <section className="relative overflow-hidden px-6 py-44 md:px-10">
       <div
@@ -231,25 +473,26 @@ export function Closing() {
             className="mx-auto mt-8 max-w-lg text-[16px] leading-relaxed"
             style={{ color: "var(--l-ink-2)" }}
           >
-            Open a room, share the code, and let it listen. Or connect your sources first
-            and see what it can already answer.
+            Open a room, share the code, and let it listen. Or connect your sources
+            first and find out how much of next week&apos;s questions it can already
+            answer.
           </p>
         </Reveal>
         <Reveal delay={240}>
           <div className="mt-12 flex flex-wrap items-center justify-center gap-3">
             <Link
-              href="/call"
+              href={gate("/call")}
               className="rounded-full px-7 py-3.5 text-[13px] tracking-[0.16em] uppercase transition-transform hover:-translate-y-0.5"
               style={{ background: "var(--l-ink)", color: "var(--l-paper)" }}
             >
-              Join a call
+              {signedIn ? "Join a call" : "Sign in to join a call"}
             </Link>
             <Link
-              href="/login"
+              href={gate("/dashboard")}
               className="rounded-full px-7 py-3.5 text-[13px] tracking-[0.16em] uppercase"
               style={{ border: "1px solid var(--l-rule)", color: "var(--l-ink)" }}
             >
-              Connect your sources
+              {signedIn ? "Open dashboard" : "Connect your sources"}
             </Link>
           </div>
         </Reveal>
@@ -259,6 +502,18 @@ export function Closing() {
 }
 
 export function Footer() {
+  const signedIn = useSignedIn();
+  const links: [string, string][] = signedIn
+    ? [
+        ["Join a call", "/call"],
+        ["Dashboard", "/dashboard"],
+        ["Sign out", "/login"],
+      ]
+    : [
+        ["Join a call", "/login"],
+        ["Dashboard", "/login"],
+        ["Sign in", "/login"],
+      ];
   return (
     <footer className="px-6 pb-14 md:px-10">
       <div
@@ -272,13 +527,9 @@ export function Footer() {
           photon
         </span>
         <div className="flex flex-wrap gap-6">
-          {[
-            ["Join a call", "/call"],
-            ["Dashboard", "/dashboard"],
-            ["Sign in", "/login"],
-          ].map(([l, h]) => (
+          {links.map(([l, h]) => (
             <Link
-              key={h}
+              key={l}
               href={h}
               className="text-[12px] tracking-[0.16em] uppercase"
               style={{ color: "var(--l-muted)" }}
