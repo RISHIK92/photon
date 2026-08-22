@@ -341,9 +341,15 @@ async def call_config(slug: str, session: AsyncSession = Depends(get_session)):
     beyond localhost.
     """
     meeting = await _meeting_by_slug(session, slug)
+    workspace = await session.get(Workspace, meeting.workspace_id)
     return {
         "slug": meeting.slug,
         "workspace_id": meeting.workspace_id,
+        # What the agent announces itself as on joining. A personal
+        # workspace's auto-generated name ("rishik's workspace") is not a
+        # company, so it stays unset and the agent introduces itself
+        # without one rather than announcing something wrong.
+        "org_name": None if (workspace and workspace.is_personal) else (workspace.name if workspace else None),
         "bot_types": meeting.bot_types or ["support"],
         "language_mode": meeting.language_mode or "english",
         # The mapping lives here rather than in the worker so "multilingual

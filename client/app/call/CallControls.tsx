@@ -103,7 +103,6 @@ export default function CallControls({
   onToggleChat,
   onOpenAdvanced,
   onCopyCode,
-  transcriptHref,
   onLeave,
 }: {
   captionsOn: boolean;
@@ -111,7 +110,6 @@ export default function CallControls({
   onToggleChat: () => void;
   onOpenAdvanced: () => void;
   onCopyCode: () => void;
-  transcriptHref: string;
   onLeave: () => void;
 }) {
   const room = useRoomContext();
@@ -230,16 +228,6 @@ export default function CallControls({
                     {label as string}
                   </button>
                 ))}
-                <a
-                  href={transcriptHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setMenu(false)}
-                  className="block rounded-lg px-3 py-2 text-[13px] transition-colors hover:bg-[rgba(28,25,23,.04)]"
-                  style={{ color: "var(--l-ink-2)" }}
-                >
-                  Open transcript ↗
-                </a>
               </div>
             </>
           )}

@@ -211,6 +211,7 @@ async def answer_question(
     workspace_id: str | None = None,
     allowed_tools: set[str] | None = None,
     bot_types: list[str] | None = None,
+    org_name: str | None = None,
 ) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
     escalation, tool_trace}. Safe to call with no call/session in progress.
@@ -288,6 +289,13 @@ async def answer_question(
             is_first_round=(round_num == 0),
             language=language,
             known_repos=known_repos,
+            # Both of these have been lost twice to concurrent edits of this
+            # call. allowed_tools is what stops the planner even SEEING a
+            # source the call excluded; without it only the execution-time
+            # block catches it, which works but wastes a round-trip and
+            # muddies the trace. org_name is who the agent says it is.
+            allowed_tools=allowed_tools,
+            org_name=org_name,
         )
         tracer.emit("plan.start", round=round_num + 1)
         plan_started = time.monotonic()
@@ -395,7 +403,11 @@ async def answer_question(
     # English, and translating the planner's input buys nothing but a new
     # way for tool selection to go wrong.
     compose_prompt = build_compose_prompt(
-        question, compose_evidence, language=language, persona_prompt=personas_prompt(bot_types)
+        question,
+        compose_evidence,
+        language=language,
+        persona_prompt=personas_prompt(bot_types),
+        org_name=org_name,
     )
     tracer.emit("compose.start", evidence_count=len(compose_evidence), language=language or "en-IN")
     compose_started = time.monotonic()

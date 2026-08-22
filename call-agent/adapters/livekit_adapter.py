@@ -42,10 +42,22 @@ SARVAM_TTS_SPEAKER = os.environ.get("SARVAM_TTS_SPEAKER") or None
 SARVAM_STT_MODEL = os.environ.get("SARVAM_STT_MODEL", "saaras:v3")
 SARVAM_STT_LANGUAGE = os.environ.get("SARVAM_STT_LANGUAGE", "unknown")
 
-ANNOUNCEMENT = (
-    "Hi, I'm Meridian's support agent. I'm listening and taking notes — "
+# What the agent says on joining. The company name is filled in from the
+# call's own workspace when there is one; it used to name the fictional demo
+# company on every real call.
+ANNOUNCEMENT_TEMPLATE = (
+    "Hi, I'm {org}'s support agent. I'm listening and taking notes — "
     "let me know if you'd like me off."
 )
+ANNOUNCEMENT_GENERIC = (
+    "Hi, I'm your support agent. I'm listening and taking notes — "
+    "let me know if you'd like me off."
+)
+
+
+def announcement_for(org_name: str | None) -> str:
+    name = (org_name or "").strip()
+    return ANNOUNCEMENT_TEMPLATE.format(org=name) if name else ANNOUNCEMENT_GENERIC
 
 # Topic the browser filters on (client/app/call/TraceBridge.tsx) so trace
 # events never get confused with chat or any other data traffic.
@@ -94,6 +106,7 @@ class LiveKitAdapter:
         ctx: agents.JobContext,
         callbacks: SessionCallbacks,
         voice_stack: str | None = None,
+        org_name: str | None = None,
     ):
         self._ctx = ctx
         self._callbacks = callbacks
@@ -102,6 +115,7 @@ class LiveKitAdapter:
         self._tts = None
         self._tts_language: str | None = None
         self._voice_stack = (voice_stack or VOICE_STACK).strip().lower()
+        self._org_name = org_name
 
     def _build_stt(self):
         if self._voice_stack == "sarvam":
@@ -153,7 +167,7 @@ class LiveKitAdapter:
             room=self._ctx.room,
             room_input_options=agents.RoomInputOptions(video_enabled=True),
         )
-        await self.announce(ANNOUNCEMENT)
+        await self.announce(announcement_for(self._org_name))
 
     def _current_speaker_id(self) -> str:
         """Identity of the participant the session is actually listening to.

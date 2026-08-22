@@ -75,10 +75,10 @@ def language_name(code: str) -> str:
 # Spoken instantly on a greeting, with no LLM in the loop — so it has to
 # be pre-written per language rather than generated.
 GREETINGS = {
-    "en-IN": "Hi — I'm here and listening. Ask me anything about Meridian whenever you're ready.",
-    "hi-IN": "नमस्ते — मैं यहाँ हूँ और सुन रहा हूँ। Meridian के बारे में जो भी पूछना हो, पूछिए।",
-    "te-IN": "నమస్కారం — నేను ఇక్కడే ఉన్నాను, వింటున్నాను. Meridian గురించి ఏదైనా అడగండి.",
-    "ta-IN": "வணக்கம் — நான் இங்கே இருக்கிறேன், கேட்டுக்கொண்டிருக்கிறேன். Meridian பற்றி எதுவும் கேளுங்கள்.",
+    "en-IN": "Hi — I'm here and listening. Ask me anything whenever you're ready.",
+    "hi-IN": "नमस्ते — मैं यहाँ हूँ और सुन रहा हूँ। जो भी पूछना हो, पूछिए।",
+    "te-IN": "నమస్కారం — నేను ఇక్కడే ఉన్నాను, వింటున్నాను. ఏదైనా అడగండి.",
+    "ta-IN": "வணக்கம் — நான் இங்கே இருக்கிறேன், கேட்டுக்கொண்டிருக்கிறேன். எதுவும் கேளுங்கள்.",
 }
 
 

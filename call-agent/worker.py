@@ -70,7 +70,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             async def on_poke(self, speaker_id: str, display_name: str) -> None:
                 await orchestrator.on_poke(speaker_id, display_name)
 
-        adapter = LiveKitAdapter(ctx, _Callbacks(), voice_stack=voice_stack)
+        adapter = LiveKitAdapter(
+            ctx, _Callbacks(), voice_stack=voice_stack, org_name=config.get("org_name")
+        )
         # The room name is the meeting slug (abcd-efgh), which is what the
         # transcript is filed under.
         orchestrator = Orchestrator(adapter, BRAIN_API_URL, meeting_slug=ctx.room.name)

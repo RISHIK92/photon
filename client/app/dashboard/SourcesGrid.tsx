@@ -7,9 +7,14 @@ import { INTEGRATIONS, SCOPE_LABEL, type Integration } from "@/lib/integrations"
  * The unbuilt ones are shown for a reason beyond roadmap theatre: the value
  * of this product is the union of its sources, and a dashboard listing one
  * source makes it look like a code search tool. Each entry says what it
- * unlocks as an answer nobody could get today, and whether it would be
- * shared or private — the distinction people need to understand BEFORE
- * connecting a mailbox.
+ * unlocks as an answer nobody could get today.
+ *
+ * Rules rather than cards, and the scope stated ONCE rather than on every
+ * tile: every live source is workspace-scoped, so repeating that seven times
+ * was seven lines of noise hiding the one place it differs — the mailboxes,
+ * which are private to the person who connects them. That distinction is the
+ * whole reason scope is surfaced at all, and it reads better when it is the
+ * only scope label on the screen.
  */
 export default function SourcesGrid({
   githubConnected,
@@ -21,9 +26,9 @@ export default function SourcesGrid({
   onConnectSource: (key: string) => void;
 }) {
   const live = INTEGRATIONS.filter((i) => i.status === "live");
+  const soon = INTEGRATIONS.filter((i) => i.status === "coming_soon");
   const connectable = (key: string) =>
     key === "github" ? onConnectGithub : () => onConnectSource(key);
-  const soon = INTEGRATIONS.filter((i) => i.status === "coming_soon");
 
   return (
     <section className="mt-20">
@@ -31,63 +36,75 @@ export default function SourcesGrid({
         <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
         <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">Sources</span>
         <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
-        <span className="text-[11px] tracking-[0.2em] uppercase whitespace-nowrap l-t-muted">
+        <span className="text-[11px] tracking-[0.2em] whitespace-nowrap uppercase l-t-muted">
           {live.length} available
         </span>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <p className="mt-5 max-w-xl text-[13px] leading-relaxed l-t-muted">
+        Everything connected here is {SCOPE_LABEL.workspace} — anyone in it can get answers
+        from it. Read-only, and scoped to what you select.
+      </p>
+
+      <div className="mt-6 grid gap-x-10 md:grid-cols-2 xl:grid-cols-3">
         {live.map((i) => {
           const connected = i.key === "github" && githubConnected > 0;
           return (
-            <button key={i.key} onClick={connectable(i.key)} className="l-card group p-5 text-left">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[16px]" style={{ color: "var(--l-ink)" }}>
+            <button
+              key={i.key}
+              onClick={connectable(i.key)}
+              className="l-row group relative block w-full border-t py-4 text-left"
+              style={{ borderColor: "var(--l-rule)" }}
+            >
+              <span className="l-row-rule" style={{ background: "var(--l-rust)" }} />
+              <span className="flex items-baseline justify-between gap-3">
+                <span className="text-[15px]" style={{ color: "var(--l-ink)" }}>
                   {i.name}
                 </span>
                 <span
-                  className="flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] tracking-[0.16em] uppercase whitespace-nowrap"
-                  style={{
-                    border: "1px solid var(--l-rule)",
-                    color: connected ? "var(--l-rust)" : "var(--l-muted)",
-                  }}
+                  className="flex shrink-0 items-center gap-1.5 text-[10px] tracking-[0.16em] whitespace-nowrap uppercase"
+                  style={{ color: connected ? "var(--l-rust)" : "var(--l-muted)" }}
                 >
                   {connected && <span className="l-dot" style={{ background: "var(--l-rust)" }} />}
                   {connected ? `${githubConnected} connected` : "connect"}
                 </span>
-              </div>
-              <p className="mt-3 text-[13px] leading-relaxed l-t-2">{i.unlocks}</p>
-              <p className="mt-3 text-[10px] tracking-[0.16em] uppercase l-t-muted">
-                {SCOPE_LABEL[i.scope]}
-              </p>
+              </span>
+              <span className="mt-1.5 block text-[13px] leading-snug l-t-2">{i.unlocks}</span>
             </button>
           );
         })}
+      </div>
 
+      <div className="mt-12 flex items-center gap-4">
+        <span className="text-[10px] tracking-[0.24em] whitespace-nowrap uppercase l-t-muted">
+          Coming soon
+        </span>
+        <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
+      </div>
+
+      <div className="mt-4 grid gap-x-10 md:grid-cols-2 xl:grid-cols-3">
         {soon.map((i) => (
-          <ComingSoon key={i.key} integration={i} />
+          <Soon key={i.key} integration={i} />
         ))}
       </div>
     </section>
   );
 }
 
-function ComingSoon({ integration }: { integration: Integration }) {
+function Soon({ integration }: { integration: Integration }) {
   return (
-    <div
-      className="rounded-[14px] border border-dashed p-5"
-      style={{ borderColor: "var(--l-rule)" }}
-      aria-disabled
-      title="Not available yet"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[16px] l-t-muted">{integration.name}</span>
-        <span className="text-[10px] tracking-[0.16em] uppercase l-t-muted">soon</span>
-      </div>
-      <p className="mt-3 text-[13px] leading-relaxed l-t-muted">{integration.unlocks}</p>
-      <p className="mt-3 text-[10px] tracking-[0.16em] uppercase l-t-muted">
-        will be {SCOPE_LABEL[integration.scope]}
+    <div className="border-t border-dashed py-3.5" style={{ borderColor: "var(--l-rule)" }}>
+      <p className="text-[14px] l-t-2">
+        {integration.name}
+        {/* the only place scope differs from the workspace default, which is
+            exactly why it is worth saying here and nowhere else */}
+        {integration.scope === "individual" && (
+          <span className="ml-2 text-[10px] tracking-[0.16em] uppercase" style={{ color: "var(--l-terra)" }}>
+            {SCOPE_LABEL.individual}
+          </span>
+        )}
       </p>
+      <p className="mt-1 text-[12px] leading-snug l-t-muted">{integration.unlocks}</p>
     </div>
   );
 }

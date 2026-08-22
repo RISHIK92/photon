@@ -16,7 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.agent.loop import answer_question
 from app.database import get_session
-from app.models import Meeting
+from app.models import Meeting, Workspace
 from app.services.meeting_slug import normalise
 from app.services.tool_availability import source_groups, tools_for
 
@@ -33,6 +33,7 @@ async def _call_config(session, payload) -> dict:
     meeting = result.scalars().first()
     if not meeting:
         return {}
+    workspace = await session.get(Workspace, meeting.workspace_id)
     groups = await source_groups(session, meeting.workspace_id)
     enabled = meeting.enabled_sources
     if enabled is None:
@@ -43,6 +44,10 @@ async def _call_config(session, payload) -> dict:
         "allowed_tools": set(tools_for(groups, enabled)),
         "bot_types": meeting.bot_types or ["support"],
         "workspace_id": meeting.workspace_id,
+        # The agent introduces itself as this workspace's agent. A personal
+        # workspace's auto-generated name ("rishik's workspace") is not a
+        # company, so it is left unset rather than announced.
+        "org_name": None if (workspace and workspace.is_personal) else (workspace.name if workspace else None),
     }
 
 router = APIRouter()
@@ -119,6 +124,7 @@ async def ask_stream(payload: AgentAskRequest, session: AsyncSession = Depends(g
                 workspace_id=config.get("workspace_id") or payload.workspace_id,
                 allowed_tools=config.get("allowed_tools"),
                 bot_types=config.get("bot_types"),
+                org_name=config.get("org_name"),
             )
         except Exception as exc:  # noqa: BLE001 - report the failure to the client, don't hang it
             queue.put_nowait({"type": "turn.error", "t": 0, "seq": 0, "error": str(exc)})
@@ -164,6 +170,7 @@ async def ask(
         workspace_id=config.get("workspace_id") or payload.workspace_id,
         allowed_tools=config.get("allowed_tools"),
         bot_types=config.get("bot_types"),
+        org_name=config.get("org_name"),
     )
 
     if not stream:

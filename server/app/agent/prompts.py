@@ -25,11 +25,24 @@ LANGUAGE_NAMES = {
     "od-IN": "Odia",
 }
 
-SYSTEM_RULES = """You are Photon, Meridian's support agent, currently on a live call. Meridian \
-is a B2B booking/scheduling SaaS. You answer questions by calling tools that search real \
-code, docs, tickets, Slack history, and live customer account state. You have NO knowledge \
-of Meridian beyond what these tools return this turn.
+# The agent's identity is built per call, not hardcoded. It used to open
+# with "You are Photon, Meridian's support agent" — Meridian being the
+# fictional demo company — so every real workspace's agent introduced
+# itself as an employee of a company that does not exist, and described a
+# product nobody on the call had heard of.
+_IDENTITY_WITH_ORG = """You are Photon, {org}'s support agent, currently on a live call. You \
+answer questions by calling tools that search {org}'s own code, documents, chat history, \
+tickets and live customer state. You have NO knowledge of {org} beyond what these tools \
+return this turn.
+"""
 
+_IDENTITY_GENERIC = """You are Photon, a support agent on a live call. You answer questions by \
+calling tools that search this company's own code, documents, chat history, tickets and live \
+customer state. You have NO knowledge of this company beyond what these tools return this \
+turn.
+"""
+
+_RULES = """
 Rules you must never break:
 1. No uncited claim. Every factual sentence must be backed by at least one piece of evidence \
 returned by a tool, referenced inline as [ev_xxx] using the evidence id exactly as given.
@@ -48,6 +61,19 @@ them mid-conversation.
 - Never read a file path or line number aloud; it's shown on screen instead.
 - Offer more detail rather than dumping everything you found.
 """
+
+
+def system_rules(org_name: str | None = None) -> str:
+    """The non-negotiable rules, prefixed with who the agent is.
+
+    `org_name` is the workspace's name. When it is unknown the agent stays
+    deliberately unnamed rather than inventing a company — an agent that
+    claims to work for the wrong company is worse than one that does not
+    say.
+    """
+    name = (org_name or "").strip()
+    identity = _IDENTITY_WITH_ORG.format(org=name) if name else _IDENTITY_GENERIC
+    return identity + _RULES
 
 _PLAN_PROMPT = """{system_rules}
 
@@ -226,6 +252,7 @@ def build_plan_prompt(
     language: str | None = None,
     known_repos: list[dict] | None = None,
     allowed_tools: set[str] | None = None,
+    org_name: str | None = None,
 ) -> str:
     screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
     context_block = f"{context}\n" if context else ""
@@ -258,7 +285,7 @@ def build_plan_prompt(
     )
 
     return _PLAN_PROMPT.format(
-        system_rules=SYSTEM_RULES,
+        system_rules=system_rules(org_name),
         tool_schemas=_format_schemas(allowed_tools),
         known_accounts=_format_accounts(),
         context_block=context_block,
@@ -279,8 +306,8 @@ quote it in English and do not apologise for translating.
 
 Two things are NOT translated and must be copied exactly, character for character:
 - every [ev_xxx] marker (they are identifiers, not words — altering one breaks the citation)
-- product, company, account and code identifiers (Meridian, Northwind, webhook, 401, \
-app/pricing.py)
+- product, company, account and code identifiers (company names, customer names, webhook, \
+401, app/pricing.py)
 
 Each claim's "text" must still be a verbatim substring of your {language_name} answer.
 """
@@ -291,6 +318,7 @@ def build_compose_prompt(
     evidence: list[dict],
     language: str | None = None,
     persona_prompt: str | None = None,
+    org_name: str | None = None,
 ) -> str:
     # No separate screen_context here on purpose: a screen-frame description
     # is folded into `evidence` as a citable ("screen" source_type) item by
@@ -299,13 +327,13 @@ def build_compose_prompt(
     # something it doesn't need to cite — same "no uncited claim" rule
     # applies to what's on screen as to everything else.
     prompt = _COMPOSE_PROMPT.format(
-        system_rules=SYSTEM_RULES,
+        system_rules=system_rules(org_name),
         question=question,
         screen_context_block="",
         evidence_block=_format_evidence(evidence),
     )
     # Appended AFTER the examples (which are English) rather than injected
-    # into SYSTEM_RULES, so it is the last and most specific instruction the
+    # into the system rules, so it is the last and most specific instruction the
     # model reads — the few-shot examples would otherwise pull the answer
     # back into English.
     if persona_prompt:

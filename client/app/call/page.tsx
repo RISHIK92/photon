@@ -18,8 +18,9 @@ import TraceBridge from "./TraceBridge";
 import AdvancedPanel from "./AdvancedPanel";
 import { mergeCaption, type Caption } from "@/lib/captions";
 import { applyTraceEvent, type TraceEvent, type TurnTrace } from "@/lib/trace";
-import { createConfiguredMeeting, getToken, transcriptUrl } from "@/lib/api";
+import { createConfiguredMeeting, getToken } from "@/lib/api";
 import WaitingRoom from "./WaitingRoom";
+import { formatMeetingCode } from "@/lib/meeting";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
@@ -360,7 +361,6 @@ export default function CallPage() {
                 onToggleChat={() => openTab("chat")}
                 onOpenAdvanced={() => setPanel("trace")}
                 onCopyCode={copyCode}
-                transcriptHref={transcriptUrl(meetingCode)}
                 onLeave={onDisconnected}
               />
               {signedIn && <WaitingRoom slug={meetingCode} />}
@@ -510,7 +510,12 @@ function Lobby({
             className="l-input mt-4 font-mono tracking-[0.12em]"
             placeholder="abcd-efgh"
             value={meetingCode}
-            onChange={(e) => onMeetingCode(e.target.value)}
+            maxLength={9}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            inputMode="text"
+            onChange={(e) => onMeetingCode(formatMeetingCode(e.target.value))}
           />
           {!signedIn && (
             <input

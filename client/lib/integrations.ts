@@ -28,6 +28,15 @@ export const INTEGRATIONS: Integration[] = [
     scope: "workspace",
   },
   {
+    // Present in the connect modal and in CallSetup's primary list from the
+    // start, but missing here — so nothing on the dashboard could open it.
+    key: "custom_docs",
+    name: "Custom docs",
+    unlocks: "The escalation policy or business flow that lives in nobody's tool",
+    status: "live",
+    scope: "workspace",
+  },
+  {
     key: "slack",
     name: "Slack",
     unlocks: "The decision that never made it into a doc — the thread where it was agreed",
@@ -96,13 +105,6 @@ export const INTEGRATIONS: Integration[] = [
     unlocks: "The thread with the customer that never reached a ticket",
     status: "coming_soon",
     scope: "individual",
-  },
-  {
-    key: "gdrive",
-    name: "Google Drive",
-    unlocks: "Contracts, SOWs and spreadsheets referenced on the call",
-    status: "coming_soon",
-    scope: "either",
   },
 ];
 

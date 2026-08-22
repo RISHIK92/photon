@@ -98,7 +98,7 @@ def _is_all_filler(text: str) -> bool:
     return consumed
 
 
-GREETING_REPLY = "Hi — I'm here and listening. Ask me anything about Meridian whenever you're ready."
+GREETING_REPLY = "Hi — I'm here and listening. Ask me anything whenever you're ready."
 
 
 def classify(text: str) -> Turn:
