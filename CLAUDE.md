@@ -109,6 +109,82 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — turn latency: 39.2s -> 2.4s median (LLM was 97% of it)
+
+The trace panel above immediately paid for itself: it showed a real S2
+turn as **39.2s total = 2.4s of tools + 38.0s of LLM**, with a single
+compose call costing 27.4s. The user asked to get the whole turn under
+3s. Everything below was measured, not assumed — the bench used the
+agent's OWN plan/compose prompts against a real 22-item evidence set.
+
+**1. Model (the big one).** Measured per-turn LLM time (plan + compose):
+
+| model | plan+compose | JSON |
+|---|---|---|
+| `deepseek/deepseek-v4-flash-0731` (was) | 11.3s / 16.6s | 1 of 2 runs failed to parse |
+| `openai/gpt-oss-120b` | 16.8s / 18.3s | both failed |
+| `google/gemini-3.7-flash` | 6.1s / 7.6s | compose failed both |
+| `anthropic/claude-haiku-4.5` | 4.6s / 6.1s | both failed (hit token cap) |
+| `google/gemini-3.1-flash-lite` | 3.7s / 9.7s | ok, unstable |
+| **`google/gemini-3.5-flash-lite`** | **2.43s / 2.49s** | **clean both** |
+
+`openrouter_chat_model` is now `google/gemini-3.5-flash-lite`. **Do not
+swap it without re-running the same measurement** — vendor benchmarks
+don't predict this; deepseek was chosen originally for exactly the same
+"it's a flash model" reasoning and was the slowest thing tested.
+(Vision still routes to `google/gemini-3.7-flash`, unchanged.)
+
+**2. Dropped the second planner round when round 1 found evidence**
+(`loop.py`). It cost a full LLM round-trip (~1s) on the critical path and
+returned "no further tools needed" nearly every time. Round 2 still runs
+when round 1 came back empty — the case it actually exists for. Emits a
+`plan.skipped` trace event so the panel shows it wasn't silently lost.
+
+**3. Output tokens, not prompt size, are the latency.** Measured: a 13%
+smaller plan prompt changed nothing (770ms either way), but a
+pretty-printed plan cost 1421ms vs 770ms compact, and compose at 257
+output tokens cost 1468ms vs 814ms at 91. So:
+- both prompts now demand single-line JSON, no indentation;
+- the voice answer cap dropped 60 -> 35 words (a latency rule as much as
+  a style one — and better for a live call anyway);
+- `claims[].text` asks for the SHORTEST verbatim substring rather than
+  the whole sentence, halving the duplicated text in the output. Still a
+  real substring, so `verifier.py`'s strip-the-uncited-claim logic works
+  unchanged (and more surgically);
+- `max_output_tokens` 800 -> 400 (plan), 1500 -> 700 (compose).
+
+**4. Compose evidence capped at 6 items** (`COMPOSE_EVIDENCE_LIMIT`),
+selected **round-robin across tools** via `_select_compose_evidence()`,
+not by slicing the flat list. A plain slice would hand the whole budget
+to whichever tool ran first and could drop the second tool's best item —
+which for S2 is the one Slack message the entire answer depends on. NOT
+a snippet-length cut: truncating inside a snippet is what silently hid
+the S3 retry paragraph once before.
+
+**Measured after (12 runs, 4 questions, live stack):**
+
+```
+min 1864ms   median 2375ms   p90 2976ms   max 3538ms   under 3s: 10/12
+```
+
+All 12 returned `confidence: high` or a correct clean abstention; the 4
+agent-loop pytest tests still pass; S1 (Northwind 401s), S2 (Bangalore
+partner rate, still citing the Slack thread), S3 (3 retries) and the
+off-topic abstention were each re-verified end to end.
+
+**Honest caveats.** (a) Both >3s runs were plan-call jitter upstream
+(1.8-2.2s vs a 0.8-1.0s norm), not our code — OpenRouter latency variance
+is still the dominant risk, as it was for deepseek. (b) These totals
+include ~0-0.5s of tool time because our tools are fast (`get_account` is
+a cached JSON read; `search_code` is ~0.4s). **If a deployment's tools
+really cost 2-2.5s, the floor is ~2.0s of LLM + that, i.e. ~4-4.5s — the
+under-3s result depends on sub-second tools, not just on the model.**
+(c) The remaining floor is two sequential LLM calls (~0.8s plan + ~1.0s
+compose); getting materially below that needs a structural change, e.g.
+streaming compose into TTS so time-to-first-audio beats time-to-full-
+answer, which the verify step currently forbids (it needs the complete
+composed JSON before anything may be spoken).
+
 ### Feature — live pipeline trace ("Advanced" panel beside the captions)
 
 The user asked to see latency in real time, which tool is being called

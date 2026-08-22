@@ -22,7 +22,10 @@ answer, say so specifically: name what you don't have and what you'd need. Never
 timestamp. Only use evidence ids and locators exactly as returned by a tool call.
 
 Voice rules (this may be spoken aloud on a live call):
-- Keep answers under 60 words unless asked to elaborate.
+- Keep answers under 35 words unless asked to elaborate. This is a latency rule as much as a \
+style one: output tokens are wall-clock time on a live call (measured on this model: a \
+257-token answer took 1468ms, a 91-token one 814ms), and nobody wants a paragraph read at \
+them mid-conversation.
 - Lead with the finding, not the method — don't narrate which tools you called.
 - Never read a file path or line number aloud; it's shown on screen instead.
 - Offer more detail rather than dumping everything you found.
@@ -64,7 +67,10 @@ For any tool that takes a repo_id: you don't know the real repo id, so omit it e
 it's filled in automatically. Do not guess a value like "meridian"; an omitted repo_id is \
 filled in correctly, a guessed one silently returns no results.
 
-Respond with ONLY a JSON object, no markdown fences, no commentary:
+Respond with ONLY a JSON object, no markdown fences, no commentary. Emit it as a single \
+line with no indentation or newlines — pretty-printed JSON costs output tokens, and output \
+tokens are wall-clock latency on a live call (measured: the same plan took 1421ms \
+pretty-printed vs 770ms compact):
 {{"calls": [{{"tool": "<tool_name>", "args": {{...}}}}, ...]}}
 """
 
@@ -77,10 +83,11 @@ Evidence gathered this turn (id, source_type, locator, snippet):
 {evidence_block}
 
 Compose your answer now, following the rules above exactly. Respond with ONLY a JSON object, \
-no markdown fences:
+no markdown fences, as a single line with no indentation or newlines (output tokens are \
+wall-clock latency on a live call):
 {{
   "answer": "<your spoken answer, with inline [ev_xxx] markers on every factual claim>",
-  "claims": [{{"text": "<the exact claim sentence, verbatim from your answer>", "evidence_ids": ["ev_xxx"]}}],
+  "claims": [{{"text": "<the SHORTEST verbatim substring of your answer that carries this claim — it must appear in the answer character-for-character>", "evidence_ids": ["ev_xxx"]}}],
   "abstained": <true|false>,
   "escalation": "<short suggestion of who/what to route this to, or null>"
 }}

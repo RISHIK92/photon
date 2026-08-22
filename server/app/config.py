@@ -59,7 +59,15 @@ class Settings(BaseSettings):
     # web console query streaming) AND vision (screen-frame analysis). See
     # note above for why both live here instead of on Gemini directly.
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
-    openrouter_chat_model: str = "deepseek/deepseek-v4-flash-0731"
+    # Latency, measured with the agent's own plan/compose prompts against a
+    # real 22-item evidence set (not vendor benchmarks): deepseek-v4-flash
+    # 11.3-16.6s per turn of LLM time, gemini-3.7-flash 6.1-7.6s,
+    # gemini-3.1-flash-lite 3.7-9.7s (unstable), gpt-oss-120b 16.8s+,
+    # claude-haiku-4.5 4.6-6.1s -> gemini-3.5-flash-lite 2.43-2.49s with
+    # clean JSON on every run. That is the whole reason this is the text
+    # model; do not swap it without re-running the same measurement (the
+    # bench lives in git history / CLAUDE.md).
+    openrouter_chat_model: str = "google/gemini-3.5-flash-lite"
     openrouter_vision_model: str = "google/gemini-3.7-flash"
 
     # Voyage AI (embeddings)

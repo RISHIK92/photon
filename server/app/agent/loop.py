@@ -22,6 +22,7 @@ from app.tools.registry import TOOL_SCHEMAS, UnknownToolError, dispatch
 log = structlog.get_logger()
 
 MAX_ROUNDS = 2
+COMPOSE_EVIDENCE_LIMIT = 6
 MAX_TOOL_CALLS_TOTAL = 6
 MAX_CALLS_PER_ROUND = 4
 
@@ -71,6 +72,33 @@ async def _run_one_call(
     )
 
     return {"tool": tool_name, "args": args, "result": result, "ms": ms}
+
+
+def _select_compose_evidence(tool_trace: list[dict], limit: int) -> list[dict]:
+    """The evidence that actually goes into the compose prompt, capped.
+
+    Round-robin across tools rather than taking the first N of a flat list:
+    evidence is appended tool by tool, so a plain slice would hand the
+    whole budget to whichever tool happened to run first and could drop
+    the second tool's best item entirely — exactly the Slack message the
+    S2 answer depends on. Each tool contributes its top result first, then
+    its second, and so on.
+    """
+    per_tool = [t.get("evidence") or [] for t in tool_trace if t.get("evidence")]
+    picked: list[dict] = []
+    seen: set[str] = set()
+    for rank in range(max((len(e) for e in per_tool), default=0)):
+        for ev_list in per_tool:
+            if rank >= len(ev_list):
+                continue
+            item = ev_list[rank]
+            if item["id"] in seen:
+                continue
+            seen.add(item["id"])
+            picked.append(item)
+            if len(picked) >= limit:
+                return picked
+    return picked
 
 
 def _dedupe_evidence(evidence: list[dict]) -> list[dict]:
@@ -146,7 +174,7 @@ async def answer_question(
         plan_prompt = build_plan_prompt(question, context_log, screen_context, is_first_round=(round_num == 0))
         tracer.emit("plan.start", round=round_num + 1)
         plan_started = time.monotonic()
-        raw_plan = await generate(plan_prompt, max_output_tokens=800, temperature=0.0, json_mode=True)
+        raw_plan = await generate(plan_prompt, max_output_tokens=400, temperature=0.0, json_mode=True)
         plan = extract_json(raw_plan) or {}
         calls = (plan.get("calls") or [])[: min(MAX_CALLS_PER_ROUND, remaining)]
 
@@ -160,7 +188,7 @@ async def answer_question(
             # see build_plan_prompt's comment).
             log.warning("agent.empty_first_round_plan_retrying", question=question)
             tracer.emit("plan.retry", round=round_num + 1, reason="empty plan on the first round")
-            raw_plan = await generate(plan_prompt, max_output_tokens=800, temperature=0.4, json_mode=True)
+            raw_plan = await generate(plan_prompt, max_output_tokens=400, temperature=0.4, json_mode=True)
             plan = extract_json(raw_plan) or {}
             calls = (plan.get("calls") or [])[: min(MAX_CALLS_PER_ROUND, remaining)]
 
@@ -201,6 +229,16 @@ async def answer_question(
             )
         context_log += "\n" + "\n".join(round_lines)
 
+        if all_evidence:
+            # A second planning round costs a full LLM round-trip (~1s) and
+            # in practice returns "no further tools needed" nearly every
+            # time once round 1 found anything — measured as pure latency
+            # on the critical path of a live call. Round 2 still runs when
+            # round 1 came back empty-handed, which is the case it exists
+            # for.
+            tracer.emit("plan.skipped", round=round_num + 2, reason="round 1 already gathered evidence")
+            break
+
     dedup_evidence = _dedupe_evidence(all_evidence)
 
     tracer.emit("evidence.gathered", count=len(dedup_evidence), raw_count=len(all_evidence))
@@ -217,10 +255,19 @@ async def answer_question(
         tracer.emit("turn.done", ms=tracer.elapsed_ms, result=result, reason="no evidence")
         return result
 
-    compose_prompt = build_compose_prompt(question, dedup_evidence)
-    tracer.emit("compose.start", evidence_count=len(dedup_evidence))
+    # Compose only ever cites a handful of items, but every extra one is
+    # input tokens on the critical path (a 22-item set is ~8.2k chars of
+    # prompt). Evidence arrives score-ordered per tool, so this keeps the
+    # strongest and drops the tail. NOT a snippet-length cut — truncating
+    # inside a snippet is what silently hid the S3 retry-policy paragraph
+    # once before (see prompts._format_evidence).
+    compose_evidence = _select_compose_evidence(tool_trace, COMPOSE_EVIDENCE_LIMIT) or dedup_evidence[
+        :COMPOSE_EVIDENCE_LIMIT
+    ]
+    compose_prompt = build_compose_prompt(question, compose_evidence)
+    tracer.emit("compose.start", evidence_count=len(compose_evidence))
     compose_started = time.monotonic()
-    raw_composed = await generate(compose_prompt, max_output_tokens=1500, temperature=0.1, json_mode=True)
+    raw_composed = await generate(compose_prompt, max_output_tokens=700, temperature=0.1, json_mode=True)
     parsed = extract_json(raw_composed)
     tracer.emit(
         "compose.done",
@@ -238,7 +285,7 @@ async def answer_question(
         "escalation": None,
     }
 
-    valid_ids = {e["id"] for e in dedup_evidence}
+    valid_ids = {e["id"] for e in compose_evidence}
     verify_started = time.monotonic()
     result = verify(composed, valid_ids)
     result["tool_trace"] = tool_trace
