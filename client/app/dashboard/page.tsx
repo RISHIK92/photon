@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
 import ConnectGithubDialog from "./ConnectGithubDialog";
 import SourcesGrid from "./SourcesGrid";
+import ConnectSourceModal from "./ConnectSourceModal";
 import {
   connectRepo,
   createWorkspace,
@@ -59,6 +60,11 @@ function Dashboard() {
   // get wrong silently (a user-owned private app simply won't list the org).
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [ghInstallCount, setGhInstallCount] = useState(0);
+  // Which source's connect form is open, and where to return afterwards
+  // (the call page sends ?connect=slack&return=/call?code=abcd-efgh so a
+  // user who left a call mid-setup lands back in the same one).
+  const [connectSource, setConnectSource] = useState<string | null>(null);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
   const [ghRepos, setGhRepos] = useState<GithubRepoOption[]>([]);
   const [ghSelected, setGhSelected] = useState<Set<number>>(new Set());
   const [ghBusy, setGhBusy] = useState(false);
@@ -139,6 +145,18 @@ function Dashboard() {
     }, 250);
     return () => clearTimeout(handle);
   }, [ghRepos, ghSelected]);
+
+  useEffect(() => {
+    const source = searchParams.get("connect");
+    const back = searchParams.get("return");
+    if (back) setReturnTo(back);
+    if (source) {
+      // GitHub has its own pre-flight dialog; everything else uses the
+      // generic connect modal.
+      if (source === "github") setShowConnectDialog(true);
+      else setConnectSource(source);
+    }
+  }, [searchParams]);
 
   // GitHub redirects back here after an installation with ?installation=connected
   // but no installation_id — the app may have multiple installations, so we
@@ -235,6 +253,16 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
+      {connectSource && (
+        <ConnectSourceModal
+          sourceKey={connectSource}
+          onClose={() => setConnectSource(null)}
+          onConnected={() => {
+            refreshRepos();
+            if (returnTo) window.location.href = returnTo;
+          }}
+        />
+      )}
       {showConnectDialog && (
         <ConnectGithubDialog
           busy={ghConnecting}
@@ -281,6 +309,7 @@ function Dashboard() {
             setGhError(null);
             setShowConnectDialog(true);
           }}
+          onConnectSource={(key) => setConnectSource(key)}
         />
 
         <section className="mb-8">

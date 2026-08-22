@@ -14,11 +14,14 @@ import { INTEGRATIONS, SCOPE_LABEL, type Integration } from "@/lib/integrations"
 export default function SourcesGrid({
   githubConnected,
   onConnectGithub,
+  onConnectSource,
 }: {
   githubConnected: number;
   onConnectGithub: () => void;
+  onConnectSource: (key: string) => void;
 }) {
   const live = INTEGRATIONS.filter((i) => i.status === "live");
+  const connectable = (key: string) => (key === "github" ? onConnectGithub : () => onConnectSource(key));
   const soon = INTEGRATIONS.filter((i) => i.status === "coming_soon");
 
   return (
@@ -29,15 +32,13 @@ export default function SourcesGrid({
         {live.map((i) => (
           <button
             key={i.key}
-            onClick={onConnectGithub}
+            onClick={connectable(i.key)}
             className="text-left border border-emerald-700/60 bg-emerald-500/5 rounded p-3 hover:bg-emerald-500/10 transition-colors"
           >
             <div className="flex items-center justify-between">
               <span className="text-sm text-neutral-100">{i.name}</span>
               <span className="text-[10px] text-emerald-300 border border-emerald-600/50 rounded px-1.5 py-0.5">
-                {githubConnected > 0
-                  ? `${githubConnected} connected`
-                  : "connect"}
+                {i.key === "github" && githubConnected > 0 ? `${githubConnected} connected` : "connect"}
               </span>
             </div>
             <p className="text-xs text-neutral-400 mt-1">{i.unlocks}</p>

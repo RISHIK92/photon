@@ -275,3 +275,58 @@ export const updateMeetingConfig = (
   slug: string,
   config: { bot_types?: string[]; language_mode?: string; enabled_sources?: string[] }
 ) => api<Meeting>(`/api/meetings/${slug}/config`, { method: "PATCH", body: JSON.stringify(config) });
+
+
+// ── Connecting sources ───────────────────────────────────────────────────
+export type ProviderField = {
+  key: string;
+  label: string;
+  secret?: boolean;
+  config?: boolean;
+  help?: string;
+};
+export type ProviderSpec = { fields: ProviderField[] };
+
+/** Linear / Notion / Datadog share one endpoint set; their forms are
+ * described by the server so a new provider needs no client change. */
+export const getConnectorProviders = () =>
+  api<Record<string, ProviderSpec>>("/api/integrations/connectors/providers");
+
+export const connectConnector = (
+  provider: string,
+  credentials: Record<string, string>,
+  config: Record<string, string>
+) =>
+  api<{ id: string; provider: string }>(`/api/integrations/connectors/${provider}`, {
+    method: "POST",
+    body: JSON.stringify({ credentials, config }),
+  });
+
+export const listConnectorResources = (connectionId: string) =>
+  api<{ resources: { id: string; name: string; selected: boolean }[]; note: string | null }>(
+    `/api/integrations/connectors/${connectionId}/resources`
+  );
+
+export const selectConnectorResources = (connectionId: string, resourceIds: string[]) =>
+  api<{ selected: string[] }>(`/api/integrations/connectors/${connectionId}/resources`, {
+    method: "POST",
+    body: JSON.stringify({ resource_ids: resourceIds }),
+  });
+
+export const connectJira = (site_url: string, account_email: string, api_token: string) =>
+  api<{ id: string }>("/api/integrations/jira", {
+    method: "POST",
+    body: JSON.stringify({ site_url, account_email, api_token }),
+  });
+
+export const startSlackInstall = () =>
+  api<{ url: string }>("/api/integrations/slack/connect", { method: "POST" });
+
+export const uploadCustomDoc = (form: FormData) =>
+  api<{ id: string; title: string; chunk_count: number }>("/api/custom-docs", {
+    method: "POST",
+    body: form,
+  });
+
+export const listCustomDocs = () =>
+  api<{ id: string; title: string; chunk_count: number }[]>("/api/custom-docs");
