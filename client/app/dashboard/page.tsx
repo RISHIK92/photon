@@ -1,0 +1,244 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import AuthGuard from "../AuthGuard";
+import {
+  connectRepo,
+  createWorkspace,
+  deleteRepo,
+  getWorkspaceId,
+  listRepos,
+  listWorkspaces,
+  logout,
+  setWorkspaceId,
+  type Repo,
+  type Workspace,
+} from "@/lib/api";
+
+// RepoStatus is uppercase on the wire (PENDING / INGESTING / READY /
+// FAILED). Compared case-insensitively so a future enum rename to
+// lowercase doesn't silently freeze the list at "pending" forever, which
+// is exactly what happened the first time.
+const ACTIVE = new Set(["pending", "ingesting"]);
+const isActive = (status: string) => ACTIVE.has(status.toLowerCase());
+
+export default function DashboardPage() {
+  return (
+    <AuthGuard>
+      <Dashboard />
+    </AuthGuard>
+  );
+}
+
+function Dashboard() {
+  const router = useRouter();
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [current, setCurrent] = useState<string | null>(null);
+  const [repos, setRepos] = useState<Repo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refreshRepos = useCallback(async () => {
+    try {
+      setRepos(await listRepos());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const ws = await listWorkspaces();
+        setWorkspaces(ws);
+        const selected = getWorkspaceId() && ws.some((w) => w.id === getWorkspaceId())
+          ? getWorkspaceId()!
+          : ws[0]?.id;
+        if (selected) {
+          setWorkspaceId(selected);
+          setCurrent(selected);
+        }
+        await refreshRepos();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [refreshRepos]);
+
+  // Ingestion runs in Celery and takes ~1 minute, so the list has to move on
+  // its own — otherwise a repo sits at "pending" until someone reloads.
+  useEffect(() => {
+    if (!repos.some((r) => isActive(r.status))) return;
+    const handle = setInterval(refreshRepos, 3000);
+    return () => clearInterval(handle);
+  }, [repos, refreshRepos]);
+
+  const switchWorkspace = async (id: string) => {
+    setWorkspaceId(id);
+    setCurrent(id);
+    setRepos([]);
+    await refreshRepos();
+  };
+
+  const addWorkspace = async () => {
+    const name = prompt("Workspace name");
+    if (!name?.trim()) return;
+    try {
+      const ws = await createWorkspace(name.trim());
+      setWorkspaces((prev) => [...prev, ws]);
+      await switchWorkspace(ws.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const source = url.trim();
+    if (!source) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const name = source.replace(/\.git$/, "").split("/").slice(-2).join("/");
+      await connectRepo(name, source);
+      setUrl("");
+      await refreshRepos();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+      <header className="border-b border-neutral-800 px-6 py-3 flex items-center gap-4">
+        <span className="font-semibold">Photon</span>
+        <select
+          value={current ?? ""}
+          onChange={(e) => switchWorkspace(e.target.value)}
+          className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm"
+        >
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+              {w.is_personal ? " (personal)" : ""}
+            </option>
+          ))}
+        </select>
+        <button onClick={addWorkspace} className="text-sm text-neutral-400 hover:text-neutral-100">
+          + workspace
+        </button>
+        <div className="flex-1" />
+        <a href="/call" className="text-sm text-indigo-400 hover:text-indigo-300">
+          Open call
+        </a>
+        <button
+          onClick={() => {
+            logout();
+            router.replace("/login");
+          }}
+          className="text-sm text-neutral-400 hover:text-neutral-100"
+        >
+          Sign out
+        </button>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-6 py-8">
+        <section className="mb-8">
+          <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">Sources</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <SourceCard name="GitHub" status="connect a repo below" active />
+            <SourceCard name="Slack" status="not connected yet" />
+            <SourceCard name="Email / Outlook" status="not connected yet" />
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">Repositories</h2>
+
+          <form onSubmit={add} className="flex gap-2 mb-4">
+            <input
+              className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-3 py-2 text-sm"
+              placeholder="https://github.com/org/repo"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            <button
+              disabled={busy}
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded px-4 py-2 text-sm font-medium"
+            >
+              {busy ? "Connecting…" : "Connect"}
+            </button>
+          </form>
+
+          {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+
+          {repos.length === 0 ? (
+            <p className="text-neutral-600 text-sm">
+              No repositories in this workspace yet. Connect one above — it clones, parses and
+              embeds in about a minute.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {repos.map((r) => (
+                <li
+                  key={r.id}
+                  className="border border-neutral-800 rounded p-3 flex items-center gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm truncate">{r.name}</p>
+                    <p className="text-xs text-neutral-500 truncate">
+                      {r.status.toLowerCase() === "ready"
+                        ? `${r.file_count} files · ${r.function_count} functions` +
+                          (r.ingest_seconds ? ` · parsed in ${Math.round(r.ingest_seconds)}s` : "")
+                        : r.error_message || r.status}
+                    </p>
+                  </div>
+                  <StatusPill status={r.status} />
+                  <button
+                    onClick={async () => {
+                      await deleteRepo(r.id);
+                      refreshRepos();
+                    }}
+                    className="text-xs text-neutral-500 hover:text-red-400"
+                  >
+                    remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function SourceCard({ name, status, active }: { name: string; status: string; active?: boolean }) {
+  return (
+    <div
+      className={`border rounded p-3 ${
+        active ? "border-emerald-700/60 bg-emerald-500/5" : "border-neutral-800"
+      }`}
+    >
+      <p className="text-sm">{name}</p>
+      <p className="text-xs text-neutral-500">{status}</p>
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const normalised = status.toLowerCase();
+  const tone =
+    normalised === "ready"
+      ? "border-emerald-600/50 text-emerald-300"
+      : normalised === "failed"
+        ? "border-red-600/50 text-red-300"
+        : "border-amber-600/50 text-amber-300";
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded border shrink-0 ${tone}`}>{normalised}</span>
+  );
+}
