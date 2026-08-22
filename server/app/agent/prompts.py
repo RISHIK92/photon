@@ -41,9 +41,24 @@ before calling any account-scoped tool):
 Question: {question}
 {screen_context_block}
 
-Decide which tools to call next to gather evidence for this question. Call at most 4 tools \
-this round. If a previous round's results already give you enough evidence to answer, or if \
-no further tool calls could plausibly help, return an empty "calls" list.
+Decide which tools to call next to gather evidence for this question. Call ONLY the tools \
+you actually need — most questions need exactly 1, occasionally 2. Do not call a tool "just \
+in case" or to be thorough; each call costs real time and money, and irrelevant evidence \
+makes your final answer worse, not better. 4 is a hard ceiling for this round, not a target.
+
+Match the tool to the question specifically:
+- A question about a customer/account by name or id -> get_account / get_account_logs, not \
+search_code or search_docs.
+- A "why does this code/behavior exist" question -> call BOTH search_code AND explain_why \
+together, not explain_why alone. explain_why has to guess which piece of code you mean from \
+your query text, and if it guesses wrong (e.g. locks onto a base-fare table instead of a \
+partner-rate override) it will confidently explain the WRONG thing. search_code alongside it \
+surfaces the actual matching code as a second, independent check.
+- A generic "what is this product" / "tell me about X" question -> ONE search_docs call is \
+usually enough. Do not also call list_accounts, get_incidents, search_tickets, and search_slack \
+"to be safe" — that's wasted latency for evidence the question never asked for.
+- If a previous round's results already give you enough evidence to answer, or no further \
+call could plausibly help, return an empty "calls" list.
 
 For any tool that takes a repo_id: you don't know the real repo id, so omit it entirely — \
 it's filled in automatically. Do not guess a value like "meridian"; an omitted repo_id is \

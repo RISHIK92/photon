@@ -109,6 +109,45 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Fix — planner over-calling tools, plus a wrong-answer regression from fixing it
+
+The user asked to check tool-calling latency, suspecting the planner was
+calling tools it didn't need. Confirmed directly: a generic "I would like
+to know about Meridian" question was calling `search_docs` AND
+`search_code` AND `list_accounts` AND `get_incidents` — four tools for a
+question that only needed one. Root cause in `app/agent/prompts.py`'s
+plan prompt: "call at most 4 tools this round" is a ceiling with no
+incentive toward economy, so the planner defaulted to "gather everything
+plausible" rather than being selective.
+
+Fixed by rewriting the plan-prompt guidance to explicitly say most
+questions need exactly 1 tool, occasionally 2, with worked examples
+mapping question shape to tool choice (account questions -> account
+tools, generic product questions -> one search_docs call, not four
+tools "to be safe"). Re-verified: the same Meridian question now calls
+just `search_docs`; an account question calls only account-scoped tools.
+
+**Caught a real regression from this fix while re-verifying S2**: with
+the new "call only 1 tool" framing, the Bangalore pricing "why" question
+started calling `explain_why` alone — and got a **wrong answer**:
+"Bangalore isn't a special case — it's one of five launch cities with a
+base fare table," flatly contradicting the actual `PARTNER_CITY_RATES`
+branch verified repeatedly earlier in this build. Cause: `explain_why`
+has to self-locate the relevant code from the query text alone, and
+without `search_code` alongside it as an independent check, it locked
+onto the wrong file (`rate_service.py`'s base-fare table instead of
+`pricing.py`'s partner-rate override) and confidently explained the
+wrong thing. Fixed by special-casing "why does this code/behavior exist"
+questions to call `search_code` + `explain_why` together — re-verified:
+correct, fully-grounded answer, still only 2 tool calls (down from the
+original 4, not regressed back to it).
+
+**Lesson worth keeping in mind**: minimizing tool calls trades off
+against redundant cross-checking. Cutting straight to "1 tool always" is
+unsafe for any question where a single tool can silently mis-locate its
+target — worth watching for the same failure mode in other tools if
+future prompt tightening happens.
+
 ### Change — dropped the "Photon" wake word, open mic by explicit request
 
 After the HTTP-client fix above, the user re-tested and reported the
