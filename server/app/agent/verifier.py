@@ -11,7 +11,13 @@ import structlog
 
 log = structlog.get_logger()
 
-_MARKER_RE = re.compile(r"\[(ev_[0-9a-f]+)\]")
+# Matches an id anywhere, NOT only when it is alone in its own brackets.
+# The compose model routinely emits "[ev_80abd768, ev_33f954d5]", and the
+# old `\[(ev_[0-9a-f]+)\]` pattern found nothing at all in that — so on the
+# no-structured-claims path a perfectly well-cited answer was treated as
+# having zero valid markers and thrown away as an abstention. Caught while
+# testing Hindi answers, but nothing about it is language-specific.
+_MARKER_RE = re.compile(r"ev_[0-9a-f]+")
 
 
 def verify(composed: dict, valid_evidence_ids: set[str]) -> dict:

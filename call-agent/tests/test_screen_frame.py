@@ -8,9 +8,9 @@ from orchestrator import Orchestrator, SCREEN_FRAME_TTL_SECONDS
 
 
 class _NullAdapter:
-    async def speak(self, text): pass
+    async def speak(self, text, language=None): pass
     async def cancel_speech(self): pass
-    async def announce(self, text): pass
+    async def announce(self, text, language=None): pass
     async def publish_event(self, event): pass
 
 

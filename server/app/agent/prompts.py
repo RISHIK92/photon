@@ -7,6 +7,24 @@ from __future__ import annotations
 from app.seed.loader import load_accounts
 from app.tools.registry import TOOL_SCHEMAS
 
+# The languages the voice stack can actually speak (Sarvam bulbul). The
+# agent may be asked in any of them; the answer must come back in the same
+# one. Kept here rather than imported from call-agent — the brain-api never
+# imports anything from the transport side (CLAUDE.md Section 5).
+LANGUAGE_NAMES = {
+    "en-IN": "English",
+    "hi-IN": "Hindi",
+    "te-IN": "Telugu",
+    "ta-IN": "Tamil",
+    "bn-IN": "Bengali",
+    "kn-IN": "Kannada",
+    "ml-IN": "Malayalam",
+    "mr-IN": "Marathi",
+    "gu-IN": "Gujarati",
+    "pa-IN": "Punjabi",
+    "od-IN": "Odia",
+}
+
 SYSTEM_RULES = """You are Photon, Meridian's support agent, currently on a live call. Meridian \
 is a B2B booking/scheduling SaaS. You answer questions by calling tools that search real \
 code, docs, tickets, Slack history, and live customer account state. You have NO knowledge \
@@ -137,7 +155,22 @@ def _format_evidence(evidence: list[dict]) -> str:
     return "\n".join(f"[{e['id']}] ({e['source_type']}) {e['locator']}: {e['snippet']}" for e in evidence)
 
 
-def build_plan_prompt(question: str, context: str, screen_context: str | None, is_first_round: bool = True) -> str:
+_PLAN_LANGUAGE_HINT = """
+The customer asked in {language_name}, but every tool, document, code file and account name \
+in this system is in ENGLISH. Translate their intent yourself and write EVERY tool argument \
+(queries, symbols, file paths) in English — a Telugu or Tamil search string will match \
+nothing. Choose tools exactly as you would for the same question asked in English; do not \
+fall back to a generic account lookup just because the wording is unfamiliar.
+"""
+
+
+def build_plan_prompt(
+    question: str,
+    context: str,
+    screen_context: str | None,
+    is_first_round: bool = True,
+    language: str | None = None,
+) -> str:
     screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
     context_block = f"{context}\n" if context else ""
     # Measured directly: at temperature=0.0 this planner (deepseek-v4-flash)
@@ -155,6 +188,13 @@ def build_plan_prompt(question: str, context: str, screen_context: str | None, i
         if is_first_round
         else ""
     )
+    if language and language != "en-IN":
+        # Measured: without this, the Tamil version of the Bangalore
+        # pricing question planned get_account instead of
+        # search_code + explain_why, and answered "Bangalore is your home
+        # city" — grounded in real evidence, but the wrong evidence.
+        nudge += _PLAN_LANGUAGE_HINT.format(language_name=LANGUAGE_NAMES.get(language, language))
+
     return _PLAN_PROMPT.format(
         system_rules=SYSTEM_RULES,
         tool_schemas=_format_schemas(),
@@ -166,16 +206,40 @@ def build_plan_prompt(question: str, context: str, screen_context: str | None, i
     )
 
 
-def build_compose_prompt(question: str, evidence: list[dict]) -> str:
+_LANGUAGE_BLOCK = """
+LANGUAGE — this overrides the language of everything below:
+Write "answer" and every claim's "text" entirely in {language_name}. The customer spoke \
+{language_name}, so they must be answered in it.
+
+The evidence above is written in English. Translate its MEANING into {language_name}; do not \
+quote it in English and do not apologise for translating.
+
+Two things are NOT translated and must be copied exactly, character for character:
+- every [ev_xxx] marker (they are identifiers, not words — altering one breaks the citation)
+- product, company, account and code identifiers (Meridian, Northwind, webhook, 401, \
+app/pricing.py)
+
+Each claim's "text" must still be a verbatim substring of your {language_name} answer.
+"""
+
+
+def build_compose_prompt(question: str, evidence: list[dict], language: str | None = None) -> str:
     # No separate screen_context here on purpose: a screen-frame description
     # is folded into `evidence` as a citable ("screen" source_type) item by
     # app.agent.loop, exactly like a tool result. Passing it a second time
     # as free-floating "context" would invite the model to treat it as
     # something it doesn't need to cite — same "no uncited claim" rule
     # applies to what's on screen as to everything else.
-    return _COMPOSE_PROMPT.format(
+    prompt = _COMPOSE_PROMPT.format(
         system_rules=SYSTEM_RULES,
         question=question,
         screen_context_block="",
         evidence_block=_format_evidence(evidence),
     )
+    # Appended AFTER the examples (which are English) rather than injected
+    # into SYSTEM_RULES, so it is the last and most specific instruction the
+    # model reads — the few-shot examples would otherwise pull the answer
+    # back into English.
+    if language and language != "en-IN":
+        prompt += _LANGUAGE_BLOCK.format(language_name=LANGUAGE_NAMES.get(language, language))
+    return prompt

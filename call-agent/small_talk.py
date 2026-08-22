@@ -45,6 +45,16 @@ _DOMAIN_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 
+# Indic greetings, so a Telugu/Tamil/Hindi "hello" gets the same instant
+# 0ms reply an English one does instead of paying for a full pipeline turn.
+# Script-specific, so there is no chance of colliding with English words.
+_GREETING_INDIC = re.compile(
+    r"^\s*(నమస్కారం|నమస్తే|హలో|హాయ్|ఏమండీ"        # Telugu
+    r"|வணக்கம்|ஹலோ|ஹாய்"                              # Tamil
+    r"|नमस्ते|नमस्कार|हैलो|हाय|प्रणाम)"                  # Hindi
+    r"[\s,.!?-]*(ఎలా ఉన్నారు|எப்படி இருக்கிறீர்கள்|कैसे हैं|कैसे हो)?[\s,.!?-]*$",
+)
+
 _GREETING = re.compile(
     r"^(hi|hey|hello|heya|yo|good (morning|afternoon|evening)|greetings)\b"
     r"[\s,.!-]*(photon\b)?[\s,.!-]*"
@@ -100,7 +110,9 @@ def classify(text: str) -> Turn:
 
     # A greeting is checked BEFORE the question guard on purpose: "how are
     # you" is literally interrogative but is not a question for the agent.
-    if len(words) <= _MAX_SMALL_TALK_WORDS and _GREETING.match(stripped):
+    if len(words) <= _MAX_SMALL_TALK_WORDS and (
+        _GREETING.match(stripped) or _GREETING_INDIC.match(stripped)
+    ):
         return Turn.GREETING
 
     # From here on, anything that looks like a real request wins.

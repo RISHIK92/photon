@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -25,7 +26,8 @@ import httpx
 import structlog
 
 from adapters.base import TransportAdapter
-from small_talk import GREETING_REPLY, Turn, classify
+from language import DEFAULT_LANGUAGE, detect_language, greeting_for
+from small_talk import Turn, classify
 from speech import for_speech
 
 log = structlog.get_logger()
@@ -56,6 +58,12 @@ VISUAL_HINT_RE = re.compile(
 # minutes later, and the agent confidently describes a screen that hasn't
 # existed for twenty minutes — real bytes, dead reality.
 SCREEN_FRAME_TTL_SECONDS = 30.0
+
+# "auto" detects the caller's language per utterance from the transcript's
+# script (language.py). Pin it to a BCP-47 code (te-IN, ta-IN, hi-IN,
+# en-IN) to force every reply into one language — useful when the STT in
+# use romanises Indic speech, which defeats script detection.
+REPLY_LANGUAGE = os.environ.get("AGENT_REPLY_LANGUAGE", "auto").strip()
 
 
 @dataclass
@@ -109,10 +117,17 @@ class Orchestrator:
             return False
         return True
 
+    def _language_for(self, question: str) -> str:
+        if REPLY_LANGUAGE != "auto":
+            return REPLY_LANGUAGE
+        return detect_language(question, default=DEFAULT_LANGUAGE)
+
     async def _handle_turn(self, question: str) -> None:
+        language = self._language_for(question)
+
         intent = classify(question)
         if intent is not Turn.ANSWER:
-            await self._handle_small_talk(question, intent)
+            await self._handle_small_talk(question, intent, language)
             return
 
         screen_image_b64 = None
@@ -124,7 +139,7 @@ class Orchestrator:
             screen_image_b64 = base64.b64encode(self.state.latest_screen_frame).decode()
 
         try:
-            result = await self._ask_brain(question, screen_image_b64)
+            result = await self._ask_brain(question, screen_image_b64, language)
         except Exception as exc:  # noqa: BLE001 - a brain-api hiccup must not take the call down
             log.error("orchestrator.brain_api_error", error=str(exc))
             await self._publish({"type": "turn.error", "error": str(exc)})
@@ -143,31 +158,35 @@ class Orchestrator:
             # literally ("...platform ev 20021cda"). The structured answer
             # already went to the browser with every marker intact, so the
             # evidence chips are unaffected.
-            await self.adapter.speak(for_speech(answer))
+            await self.adapter.speak(for_speech(answer), language=language)
         else:
             log.warning("orchestrator.empty_answer", question=question, result=result)
 
-    async def _handle_small_talk(self, question: str, intent: Turn) -> None:
+    async def _handle_small_talk(self, question: str, intent: Turn, language: str) -> None:
         """Greetings get an instant canned line; ambient speech gets
         nothing at all. Neither makes a factual claim, so the "no uncited
         claim" rule is untouched — there is nothing here to cite."""
-        log.info("orchestrator.small_talk", intent=intent.value, text=question)
+        log.info("orchestrator.small_talk", intent=intent.value, text=question, language=language)
         turn_id = f"{int(time.time() * 1000)}"
-        answer = GREETING_REPLY if intent is Turn.GREETING else ""
+        # Pre-written per language rather than generated — a greeting has
+        # to be instant, and there is no LLM in this path at all.
+        answer = greeting_for(language) if intent is Turn.GREETING else ""
 
         # Still traced, so the advanced panel shows a deliberate 0ms fast
         # path rather than going blank as if the agent had missed the turn.
         await self._publish({"type": "turn.requested", "turn_id": turn_id, "question": question, "source": "voice"})
         await self._publish({"type": "turn.fastpath", "turn_id": turn_id, "source": "voice", "t": 0,
-                             "intent": intent.value})
+                             "intent": intent.value, "language": language})
         await self._publish({"type": "turn.done", "turn_id": turn_id, "source": "voice", "t": 0, "ms": 0,
                              "result": {"answer": answer or "(no reply — ambient speech)", "claims": [],
                                         "confidence": "high", "abstained": False, "escalation": None,
                                         "tool_trace": []}})
         if answer:
-            await self.adapter.speak(answer)
+            await self.adapter.speak(answer, language=language)
 
-    async def _ask_brain(self, question: str, screen_image_b64: str | None) -> dict | None:
+    async def _ask_brain(
+        self, question: str, screen_image_b64: str | None, language: str = DEFAULT_LANGUAGE
+    ) -> dict | None:
         """Stream one turn from the brain-api, forwarding every trace event
         into the room as it arrives, and return the final answer.
 
@@ -179,13 +198,18 @@ class Orchestrator:
         way; this only changes when the UI hears about the steps.
         """
         turn_id = f"{int(time.time() * 1000)}"
-        await self._publish({"type": "turn.requested", "turn_id": turn_id, "question": question, "source": "voice"})
+        await self._publish({"type": "turn.requested", "turn_id": turn_id, "question": question,
+                             "source": "voice", "language": language})
 
         final: dict | None = None
         async with self._http.stream(
             "POST",
             f"{self.brain_api_url}/api/agent/ask/stream",
-            json={"question": question, "screen_image_base64": screen_image_b64},
+            json={
+                "question": question,
+                "screen_image_base64": screen_image_b64,
+                "language": language,
+            },
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():

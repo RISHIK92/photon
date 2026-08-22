@@ -109,6 +109,107 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Feature — multilingual voice (Telugu/Tamil/Hindi/English) behind `VOICE_STACK`
+
+The user wants Indic language support and asked for the whole path behind
+an env var. TTS was the easy third; the work is that **three things have
+to line up — hear it, answer in it, speak it** — and the corpus is English
+throughout, so the answer has to be composed in the caller's language
+while citing English evidence.
+
+**Env vars (all optional, defaults keep today's behaviour exactly):**
+
+| var | default | meaning |
+|---|---|---|
+| `VOICE_STACK` | `deepgram` | `sarvam` swaps STT+TTS to Sarvam's Indic models |
+| `SARVAM_API_KEY` | — | required only when `VOICE_STACK=sarvam` |
+| `SARVAM_TTS_MODEL` | `bulbul:v3` | `bulbul:v2` is half the credits, fewer voices |
+| `SARVAM_TTS_SPEAKER` | plugin default (`shubh`) | any v3 speaker |
+| `SARVAM_STT_MODEL` | `saaras:v3` | with `language=unknown` it auto-detects |
+| `AGENT_REPLY_LANGUAGE` | `auto` | pin to `te-IN`/`ta-IN`/`hi-IN`/`en-IN` to force one language |
+
+**1. Hearing it** — `deepgram.STT(nova-3)` / `aura-2-thalia-en` (English
+only) vs `sarvam.STT(saaras:v3, language="unknown")` /
+`sarvam.TTS(bulbul:v3)`. Both plugin imports are lazy inside
+`_build_stt`/`_build_tts`, so the default path doesn't need the package
+installed. `livekit-plugins-sarvam` is in requirements.txt as optional.
+
+**2. Knowing which language** — `call-agent/language.py`, by **Unicode
+script**, not a model or an API call: Telugu, Tamil and Devanagari occupy
+disjoint code-point blocks, so there is nothing to infer and it costs
+nothing. It works identically behind either vendor, which is the point.
+Code-mixed speech is the norm on Indian support calls, so the bar is a
+*plurality* of letters (≥20%), not a majority — "sir webhook fail
+అవుతోంది" is answered in Telugu, while one stray Indic word in a long
+English sentence doesn't flip the reply. **Its one real limitation**: it
+needs STT to emit native script. If an STT romanises Telugu as Latin
+("meeru ela unnaru") every heuristic here sees English — that is what
+`AGENT_REPLY_LANGUAGE` is for.
+
+**3. Answering in it** — `build_compose_prompt(..., language=)` appends a
+language block AFTER the few-shot examples (which are English and would
+otherwise pull the answer back into English). It says: translate the
+MEANING of the English evidence, but copy every `[ev_xxx]` marker and
+every product/account identifier character for character, and keep each
+claim's `text` a verbatim substring of the translated answer. Verified:
+claims really do stay verbatim substrings in all four languages, so
+`verifier.py` still strips uncited claims in-language.
+
+**4. Speaking it** — `TransportAdapter.speak()` gained an optional
+`language`. Sarvam's plugin exposes `update_options()`, so one
+`AgentSession` retargets TTS per turn — a caller can switch from Hindi to
+English mid-call without rebuilding the session. On Deepgram it is a
+deliberate no-op (aura-2 is English-only): the answer still gets spoken,
+just in an English voice, rather than erroring.
+
+**Two bugs this work exposed, both language-independent:**
+- `verifier.py`'s `_MARKER_RE` was `\[(ev_[0-9a-f]+)\]` — it matched
+  nothing at all in `[ev_80abd768, ev_33f954d5]`, which the compose model
+  routinely emits. On the no-structured-claims path a perfectly well-cited
+  answer was therefore treated as having zero valid markers and **thrown
+  away as an abstention**. Now matches ids anywhere; 5 new tests in
+  `server/tests/test_verifier.py`.
+- `_no_evidence_abstention()` said "I checked any tools" when no tool ran
+  — broken English, shipped since Phase 3. That case now has its own
+  sentence, and the whole abstention is localised (it is built without an
+  LLM by design, so it can only be multilingual if pre-written).
+
+**Also localised the 0ms fast path**: Indic greetings (నమస్కారం, வணக்கம்,
+नमस्ते …) now hit the same instant canned reply English does — measured
+**0ms**, versus 2.3s when it fell through to the full pipeline.
+
+**A real failure caught while testing, worth keeping**: the Tamil version
+of the Bangalore question first answered *"Bangalore is your home city"* —
+grounded in real evidence, but the WRONG evidence. The planner was reading
+Tamil and quietly fell back to a generic account lookup instead of
+`search_code` + `explain_why`. Fixed with a plan-prompt hint (only added
+for non-English turns) telling it the corpus and every tool argument are
+English and to translate intent itself. **Planning deliberately stays in
+English** — translating the planner's input buys nothing but a new way for
+tool selection to go wrong.
+
+**Verified end to end** through the real `Orchestrator` with a mock
+adapter against the live brain-api, no Sarvam key needed for any of it:
+
+```
+   0ms  te-IN  నమస్కారం                    -> instant Telugu greeting
+3619ms  te-IN  Telugu pricing question     -> correct, cited, in Telugu
+2922ms  ta-IN  Tamil pricing question      -> correct, cited, in Tamil
+2459ms  hi-IN  Hindi pricing question      -> correct, cited, in Hindi
+2281ms  en-IN  English pricing question    -> unchanged
+   1ms  --     "One sec, the phone."       -> silent
+```
+
+Citation markers stripped from every spoken line, present in every
+published one. English path re-checked after the change: eval 16/16,
+median 2053ms. 99 tests pass in `call-agent/tests/`, 9 in `server/tests/`.
+
+**Untested, needs a key**: the Sarvam plugins themselves. Construction is
+verified (both build, and `update_options` switches te-IN/ta-IN/hi-IN/en-IN
+cleanly), but no audio has been synthesised — and **Sarvam publishes no
+TTS latency figures**, which is the number that matters for a live call.
+Benchmark v2 vs v3 TTFB before the demo.
+
 ### Fix — screen share was silently dead: `from_track()` is keyword-only
 
 Found while the user live-tested screen share. They shared their screen and

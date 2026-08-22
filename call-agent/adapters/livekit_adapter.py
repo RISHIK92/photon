@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import time
 
 import structlog
@@ -23,6 +24,19 @@ from livekit.plugins import deepgram, silero
 from adapters.base import SessionCallbacks
 
 log = structlog.get_logger()
+
+# Which STT/TTS vendor to use. Deepgram stays the default so nothing about
+# an existing setup changes; VOICE_STACK=sarvam swaps in Sarvam's Indic
+# models (bulbul TTS / saaras STT), which is the only way this agent can
+# speak Telugu, Tamil or Hindi at all — deepgram's aura-2-thalia-en is
+# English-only.
+VOICE_STACK = os.environ.get("VOICE_STACK", "deepgram").strip().lower()
+SARVAM_TTS_MODEL = os.environ.get("SARVAM_TTS_MODEL", "bulbul:v3")
+SARVAM_TTS_SPEAKER = os.environ.get("SARVAM_TTS_SPEAKER") or None
+# saaras:v3 with language="unknown" auto-detects the spoken language, which
+# is what makes one agent handle four of them without being told first.
+SARVAM_STT_MODEL = os.environ.get("SARVAM_STT_MODEL", "saaras:v3")
+SARVAM_STT_LANGUAGE = os.environ.get("SARVAM_STT_LANGUAGE", "unknown")
 
 ANNOUNCEMENT = (
     "Hi, I'm Meridian's support agent. I'm listening and taking notes — "
@@ -63,13 +77,39 @@ class LiveKitAdapter:
         self._callbacks = callbacks
         self._session: agents.AgentSession | None = None
         self._screen_task: asyncio.Task | None = None
+        self._tts = None
+        self._tts_language: str | None = None
+
+    def _build_stt(self):
+        if VOICE_STACK == "sarvam":
+            from livekit.plugins import sarvam
+
+            log.info("livekit_adapter.stt", vendor="sarvam", model=SARVAM_STT_MODEL,
+                     language=SARVAM_STT_LANGUAGE)
+            return sarvam.STT(model=SARVAM_STT_MODEL, language=SARVAM_STT_LANGUAGE, mode="transcribe")
+        log.info("livekit_adapter.stt", vendor="deepgram", model="nova-3")
+        return deepgram.STT(model="nova-3")
+
+    def _build_tts(self):
+        if VOICE_STACK == "sarvam":
+            from livekit.plugins import sarvam
+
+            log.info("livekit_adapter.tts", vendor="sarvam", model=SARVAM_TTS_MODEL,
+                     speaker=SARVAM_TTS_SPEAKER)
+            kwargs = {"model": SARVAM_TTS_MODEL, "target_language_code": "en-IN"}
+            if SARVAM_TTS_SPEAKER:
+                kwargs["speaker"] = SARVAM_TTS_SPEAKER
+            return sarvam.TTS(**kwargs)
+        log.info("livekit_adapter.tts", vendor="deepgram", model="aura-2-thalia-en")
+        return deepgram.TTS(model="aura-2-thalia-en")
 
     async def start(self) -> None:
         await self._ctx.connect()
 
+        self._tts = self._build_tts()
         self._session = agents.AgentSession(
-            stt=deepgram.STT(model="nova-3"),
-            tts=deepgram.TTS(model="aura-2-thalia-en"),
+            stt=self._build_stt(),
+            tts=self._tts,
             vad=silero.VAD.load(),
         )
         agent = _InterceptAgent(self._callbacks, speaker_id=self._local_speaker_id())
@@ -180,19 +220,39 @@ class LiveKitAdapter:
 
     # ── TransportAdapter ─────────────────────────────────────────────────
 
-    async def speak(self, text: str) -> None:
+    async def speak(self, text: str, language: str | None = None) -> None:
         if not self._session:
             log.warning("livekit_adapter.speak_before_start", text=text)
             return
+        self._retarget_tts(language)
         self._session.say(text)
+
+    def _retarget_tts(self, language: str | None) -> None:
+        """Point the TTS at the caller's language before speaking.
+
+        Sarvam's plugin exposes update_options(), so one AgentSession can
+        switch language per turn — no need to tear down and rebuild the
+        session when a caller switches from Hindi to English mid-call.
+        Deepgram's aura-2-thalia-en has no such knob (it is English-only),
+        so this is a no-op there rather than an error: the answer still
+        gets spoken, just in an English voice.
+        """
+        if not language or language == self._tts_language or VOICE_STACK != "sarvam":
+            return
+        try:
+            self._tts.update_options(target_language_code=language)
+            self._tts_language = language
+            log.info("livekit_adapter.tts_language_switched", language=language)
+        except Exception as exc:  # noqa: BLE001 - never lose the answer over a voice setting
+            log.warning("livekit_adapter.tts_language_switch_failed", language=language, error=str(exc))
 
     async def cancel_speech(self) -> None:
         if not self._session:
             return
         self._session.interrupt()
 
-    async def announce(self, text: str) -> None:
-        await self.speak(text)
+    async def announce(self, text: str, language: str | None = None) -> None:
+        await self.speak(text, language)
 
     async def publish_event(self, event: dict) -> None:
         """Broadcast one trace event to every participant over LiveKit's

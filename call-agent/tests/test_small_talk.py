@@ -94,3 +94,26 @@ def test_screen_questions_reach_the_pipeline(text):
 def test_screen_questions_are_recognised_as_visual(text):
     from orchestrator import VISUAL_HINT_RE
     assert VISUAL_HINT_RE.search(text), f"visual intent not detected: {text!r}"
+
+
+# ── Indic greetings get the same instant path as English ─────────────────
+
+INDIC_GREETINGS = ["నమస్కారం", "నమస్తే", "హలో", "வணக்கம்", "ஹலோ", "नमस्ते", "नमस्कार", "हैलो"]
+
+
+@pytest.mark.parametrize("text", INDIC_GREETINGS)
+def test_indic_greetings_are_answered_locally(text):
+    assert classify(text) is Turn.GREETING
+
+
+INDIC_QUESTIONS = [
+    "బెంగళూరు ధరలు ఎందుకు ప్రత్యేకంగా ఉన్నాయి?",
+    "பெங்களூரு விலை ஏன் வித்தியாசமாக உள்ளது?",
+    "बैंगलोर की कीमत अलग क्यों है?",
+    "నమస్కారం, బెంగళూరు ధరల గురించి చెప్పండి?",   # greeting + a real question
+]
+
+
+@pytest.mark.parametrize("text", INDIC_QUESTIONS)
+def test_indic_questions_still_reach_the_pipeline(text):
+    assert classify(text) is Turn.ANSWER

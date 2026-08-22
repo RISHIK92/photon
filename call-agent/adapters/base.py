@@ -6,9 +6,10 @@ has to satisfy for the Company Brain to work over it:
 - `TransportAdapter` — implemented by a platform-specific adapter
   (`livekit_adapter.py` today; a hypothetical `recall_adapter.py` for
   Zoom/Meet/Teams later, same shape). Called BY the orchestrator to act:
-  speak a line, cancel mid-utterance on barge-in, make a one-off
-  announcement, or publish a structured event out to whatever UI the
-  platform gives the participants.
+  speak a line (optionally in a specific BCP-47 language — the adapter
+  decides whether its TTS can honour that), cancel mid-utterance on
+  barge-in, make a one-off announcement, or publish a structured event out
+  to whatever UI the platform gives the participants.
 
   `publish_event` is the fourth method, added for the live trace panel.
   Speech is the agent's answer to the human; this is everything *about*
@@ -39,7 +40,7 @@ class SessionCallbacks(Protocol):
 
 
 class TransportAdapter(Protocol):
-    async def speak(self, text: str) -> None: ...
+    async def speak(self, text: str, language: str | None = None) -> None: ...
 
     async def cancel_speech(self) -> None: ...
 

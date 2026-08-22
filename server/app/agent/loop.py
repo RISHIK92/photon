@@ -108,9 +108,28 @@ def _dedupe_evidence(evidence: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
-def _no_evidence_abstention(tool_trace: list[dict]) -> str:
-    tools_tried = ", ".join(sorted({t["tool"] for t in tool_trace})) or "any tools"
-    return f"I don't have evidence for that. I checked {tools_tried} and found nothing relevant to your question."
+# The abstention is built without an LLM (that's the point — it must be
+# reliable when everything else failed), so a non-English caller can only
+# be answered in their language if the sentence is pre-written. Keyed to
+# the same BCP-47 codes the voice stack uses.
+_ABSTENTION = {
+    "en-IN": ("I don't have evidence for that. I checked {tools} and found nothing relevant to your question.",
+              "I don't have evidence for that — none of my tools returned anything relevant."),
+    "hi-IN": ("मेरे पास इसका कोई प्रमाण नहीं है। मैंने {tools} देखा और कुछ प्रासंगिक नहीं मिला।",
+              "मेरे पास इसका कोई प्रमाण नहीं है — मेरे किसी भी टूल से कुछ प्रासंगिक नहीं मिला।"),
+    "te-IN": ("దీనికి నా దగ్గర ఆధారం లేదు. నేను {tools} చూశాను, సంబంధించినది ఏమీ దొరకలేదు.",
+              "దీనికి నా దగ్గర ఆధారం లేదు — నా టూల్స్ ఏవీ సంబంధిత సమాచారం ఇవ్వలేదు."),
+    "ta-IN": ("இதற்கு என்னிடம் ஆதாரம் இல்லை. நான் {tools} பார்த்தேன், தொடர்புடையது எதுவும் கிடைக்கவில்லை.",
+              "இதற்கு என்னிடம் ஆதாரம் இல்லை — என் கருவிகள் எதுவும் தொடர்புடையதைத் தரவில்லை."),
+}
+
+
+def _no_evidence_abstention(tool_trace: list[dict], language: str | None = None) -> str:
+    with_tools, without_tools = _ABSTENTION.get(language or "en-IN", _ABSTENTION["en-IN"])
+    tools_tried = ", ".join(sorted({t["tool"] for t in tool_trace}))
+    # No tools ran at all -> the old string said "I checked any tools",
+    # which is just broken English; that case needs its own sentence.
+    return with_tools.format(tools=tools_tried) if tools_tried else without_tools
 
 
 async def answer_question(
@@ -119,6 +138,7 @@ async def answer_question(
     screen_context: str | None = None,
     screen_image_bytes: bytes | None = None,
     on_event: EventSink | None = None,
+    language: str | None = None,
 ) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
     escalation, tool_trace}. Safe to call with no call/session in progress.
@@ -171,7 +191,9 @@ async def answer_question(
         if remaining <= 0:
             break
 
-        plan_prompt = build_plan_prompt(question, context_log, screen_context, is_first_round=(round_num == 0))
+        plan_prompt = build_plan_prompt(
+            question, context_log, screen_context, is_first_round=(round_num == 0), language=language
+        )
         tracer.emit("plan.start", round=round_num + 1)
         plan_started = time.monotonic()
         raw_plan = await generate(plan_prompt, max_output_tokens=400, temperature=0.0, json_mode=True)
@@ -245,7 +267,7 @@ async def answer_question(
 
     if not dedup_evidence:
         result = {
-            "answer": _no_evidence_abstention(tool_trace),
+            "answer": _no_evidence_abstention(tool_trace, language),
             "claims": [],
             "confidence": "low",
             "abstained": True,
@@ -264,8 +286,12 @@ async def answer_question(
     compose_evidence = _select_compose_evidence(tool_trace, COMPOSE_EVIDENCE_LIMIT) or dedup_evidence[
         :COMPOSE_EVIDENCE_LIMIT
     ]
-    compose_prompt = build_compose_prompt(question, compose_evidence)
-    tracer.emit("compose.start", evidence_count=len(compose_evidence))
+    # The caller's language reaches ONLY compose. Planning stays in English
+    # on purpose: tool names, the account directory and the corpus are all
+    # English, and translating the planner's input buys nothing but a new
+    # way for tool selection to go wrong.
+    compose_prompt = build_compose_prompt(question, compose_evidence, language=language)
+    tracer.emit("compose.start", evidence_count=len(compose_evidence), language=language or "en-IN")
     compose_started = time.monotonic()
     raw_composed = await generate(compose_prompt, max_output_tokens=700, temperature=0.1, json_mode=True)
     parsed = extract_json(raw_composed)

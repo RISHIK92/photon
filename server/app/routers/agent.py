@@ -20,6 +20,7 @@ class AgentAskRequest(BaseModel):
     repo_id: Optional[str] = None
     screen_context: Optional[str] = None
     screen_image_base64: Optional[str] = None  # a JPEG frame, base64-encoded
+    language: Optional[str] = None  # BCP-47 (te-IN, ta-IN, hi-IN, en-IN) — answer in this
 
 
 def _decode_frame(payload: "AgentAskRequest") -> Optional[bytes]:
@@ -60,6 +61,7 @@ async def ask_stream(payload: AgentAskRequest):
                 payload.screen_context,
                 screen_image_bytes,
                 on_event=sink,
+                language=payload.language,
             )
         except Exception as exc:  # noqa: BLE001 - report the failure to the client, don't hang it
             queue.put_nowait({"type": "turn.error", "t": 0, "seq": 0, "error": str(exc)})
@@ -92,7 +94,11 @@ async def ask(payload: AgentAskRequest, stream: bool = Query(default=False)):
     screen_image_bytes = _decode_frame(payload)
 
     result = await answer_question(
-        payload.question, payload.repo_id, payload.screen_context, screen_image_bytes
+        payload.question,
+        payload.repo_id,
+        payload.screen_context,
+        screen_image_bytes,
+        language=payload.language,
     )
 
     if not stream:
