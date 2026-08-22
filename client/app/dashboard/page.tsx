@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "../AuthGuard";
+import ConnectGithubDialog from "./ConnectGithubDialog";
 import {
   connectRepo,
   createWorkspace,
@@ -52,6 +53,10 @@ function Dashboard() {
   const [ghConnecting, setGhConnecting] = useState(false);
   const [ghInstallationId, setGhInstallationId] = useState<number | null>(null);
   const [ghEstimate, setGhEstimate] = useState<IngestEstimate | null>(null);
+  // The install hand-off is gated behind a pre-flight dialog: it is the one
+  // step that leaves our UI, grants access to source code, and is easy to
+  // get wrong silently (a user-owned private app simply won't list the org).
+  const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [ghRepos, setGhRepos] = useState<GithubRepoOption[]>([]);
   const [ghSelected, setGhSelected] = useState<Set<number>>(new Set());
   const [ghBusy, setGhBusy] = useState(false);
@@ -220,6 +225,13 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
+      {showConnectDialog && (
+        <ConnectGithubDialog
+          busy={ghConnecting}
+          onCancel={() => setShowConnectDialog(false)}
+          onConfirm={connectGithub}
+        />
+      )}
       <header className="border-b border-neutral-800 px-6 py-3 flex items-center gap-4">
         <span className="font-semibold">Photon</span>
         <select
@@ -257,7 +269,10 @@ function Dashboard() {
           <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">Sources</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <button
-              onClick={connectGithub}
+              onClick={() => {
+                setGhError(null);
+                setShowConnectDialog(true);
+              }}
               disabled={ghConnecting}
               className="text-left border border-emerald-700/60 bg-emerald-500/5 hover:bg-emerald-500/10 disabled:opacity-50 rounded p-3"
             >

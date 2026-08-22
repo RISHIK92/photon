@@ -111,6 +111,44 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Pre-flight dialog before the GitHub hand-off
+
+The user asked for a screen explaining what's about to happen — especially
+for the private-org case — shown BEFORE Connect GitHub leaves for GitHub,
+with an explicit confirmation.
+
+Rather than static instructions the user has to map onto their own
+situation, it reads the App's real state: `GET /api/integrations/github/app`
+returns slug/owner/permissions/installations straight from GitHub's `/app`.
+
+**`org_install_supported` is derived from OWNER TYPE, not a `public`
+flag** — GitHub's `/app` response does not reliably carry `public` (it came
+back absent here), but it always sends the owner. A User-owned private App
+can only be installed on that user's account, so `owner_type ==
+"Organization"` is the honest signal.
+
+`client/app/dashboard/ConnectGithubDialog.tsx` then says something
+specific: with the current App it renders "This app is owned by @RISHIK92
+(a personal account) and is private, so GitHub will only offer that
+account as an install target", the two ways out (transfer to the org, or
+make public) with a deep link to the settings page, and the note that
+personal-account installs work right now regardless. Plus the four steps,
+the actual permissions read live from the App, and a plain statement that
+selected code is cloned, chunked, sent to the embedding provider, and
+sent to the LLM at query time — gated behind an "I understand" checkbox
+that disables Continue until ticked.
+
+Live-verified in the browser against the real App.
+
+**Also confirmed working in that same screenshot**: GitHub sign-in now
+succeeds end to end — the signed-in workspace is
+`86944435+rishik92's workspace`, i.e. the noreply-email fallback added
+after the `/user/emails` 403 is what created the account. That 403 is a
+GitHub App concept trap worth remembering: a GitHub App's user token
+derives access from the App's PERMISSIONS, not from OAuth scopes, so
+`scope=user:email` in the authorize URL buys nothing and the call fails
+for any user with a private email — which is the GitHub default.
+
 ## GitHub App — setup, and the three bugs that blocked it
 
 The App exists and is live: **Photon-githubabcd**, app id `4684753`, owner

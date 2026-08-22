@@ -60,6 +60,47 @@ async def _get_installation_for_workspace(session: AsyncSession, installation_id
 
 # ─── Install ─────────────────────────────────────────────────────────────────
 
+@router.get("/app")
+async def app_info(current_user: User = Depends(get_current_user)):
+    """What this deployment's GitHub App actually is, straight from GitHub.
+
+    Exists so the pre-flight dialog can tell the user something specific
+    ("this App is owned by @you and cannot be installed on an org yet")
+    instead of generic documentation they have to map onto their own
+    situation. Read-only and cheap: one call, and the answer only changes
+    when an operator edits the App.
+    """
+    if not settings.github_app_id or not settings.github_app_private_key:
+        raise HTTPException(status_code=503, detail="GitHub App is not configured on this deployment")
+
+    jwt_token = generate_app_jwt()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            "https://api.github.com/app",
+            headers={"Authorization": f"Bearer {jwt_token}", "Accept": "application/vnd.github+json"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Could not reach GitHub to check the app configuration")
+    data = resp.json()
+    owner = data.get("owner") or {}
+
+    # GitHub's /app response does not reliably carry the `public` flag, so
+    # org-installability is derived from ownership, which it always sends:
+    # an App owned by a USER can only be installed on that user's account
+    # unless it is made public or transferred to the org.
+    owner_type = owner.get("type", "User")
+    return {
+        "slug": data.get("slug"),
+        "name": data.get("name"),
+        "owner_login": owner.get("login"),
+        "owner_type": owner_type,
+        "permissions": data.get("permissions") or {},
+        "installations_count": data.get("installations_count", 0),
+        "org_install_supported": owner_type == "Organization",
+        "settings_url": f"https://github.com/settings/apps/{data.get('slug')}",
+    }
+
+
 @router.post("/connect")
 async def start_install(
     current_user: User = Depends(get_current_user),

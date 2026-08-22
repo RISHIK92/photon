@@ -179,6 +179,21 @@ export const listGithubInstallations = () => api<GitHubInstallation[]>("/api/int
 
 /** Authenticated call that returns a URL to navigate to (window.location.href = ...),
  * not a link the user clicks directly. */
+export type GithubAppInfo = {
+  slug: string;
+  name: string;
+  owner_login: string;
+  owner_type: "User" | "Organization" | string;
+  permissions: Record<string, string>;
+  installations_count: number;
+  /** False when the App is user-owned and private — GitHub then refuses
+   * installation anywhere but the owner's own account. */
+  org_install_supported: boolean;
+  settings_url: string;
+};
+
+export const getGithubAppInfo = () => api<GithubAppInfo>("/api/integrations/github/app");
+
 export const startGithubInstall = () =>
   api<{ url: string }>("/api/integrations/github/connect", { method: "POST" });
 
