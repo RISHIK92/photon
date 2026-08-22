@@ -46,6 +46,27 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE repos ADD COLUMN IF NOT EXISTS ingest_seconds DOUBLE PRECISION"
         ))
+        # Postgres enum types are created once by create_all and NEVER
+        # altered by it, so adding a value to a Python Enum leaves the DB
+        # type behind — inserts then fail with
+        # `invalid input value for enum workspacerole: "VIEWER"`.
+        # SQLAlchemy persists enum NAMES, hence the uppercase literal.
+        # (PG allows ADD VALUE inside a transaction as long as the new value
+        # is not also USED in that same transaction — it isn't, this runs at
+        # startup.)
+        await conn.execute(text(
+            "ALTER TYPE workspacerole ADD VALUE IF NOT EXISTS 'VIEWER'"
+        ))
+
+        # Connections can belong to the whole workspace or to one person
+        # (see core/workspace.py). Existing rows predate the distinction and
+        # were all workspace-wide, which is the correct backfill.
+        await conn.execute(text(
+            "ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS scope VARCHAR NOT NULL DEFAULT 'workspace'"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS owner_user_id VARCHAR REFERENCES users(id) ON DELETE CASCADE"
+        ))
         # GitHub App support: OAuth login linking (users.github_id/login,
         # password now optional) and per-repo installation tagging (for the
         # picker's already-imported diff and installation-token cloning).

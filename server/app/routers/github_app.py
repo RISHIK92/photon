@@ -26,9 +26,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import get_settings
 from app.core.auth import get_current_user
-from app.core.workspace import get_current_workspace
+from app.core.workspace import get_current_workspace, require_role
 from app.database import get_session
-from app.models import GitHubInstallation, GitHubInstallationRead, Job, Repo, RepoSourceType, User, Workspace
+from app.models import WorkspaceRole, GitHubInstallation, GitHubInstallationRead, Job, Repo, RepoSourceType, User, Workspace
 from app.services.github_app_auth import generate_app_jwt, get_installation_token_async
 from app.tasks.ingestion import run_ingestion
 
@@ -104,7 +104,7 @@ async def app_info(current_user: User = Depends(get_current_user)):
 @router.post("/connect")
 async def start_install(
     current_user: User = Depends(get_current_user),
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.OWNER)),
 ):
     if not settings.github_app_slug:
         raise HTTPException(status_code=503, detail="GitHub App is not configured on this deployment")
@@ -241,7 +241,7 @@ async def import_installation_repos(
     installation_id: int,
     payload: ImportReposRequest,
     current_user: User = Depends(get_current_user),
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.MEMBER)),
     session: AsyncSession = Depends(get_session),
 ):
     """Create a Repo + dispatch ingestion for each selected repo not

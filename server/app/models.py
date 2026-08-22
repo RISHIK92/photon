@@ -46,8 +46,16 @@ class UserRead(SQLModel):
 
 
 class WorkspaceRole(str, Enum):
-    OWNER = "owner"
+    """Ordered least- to most-privileged; see core/workspace.py:role_at_least.
+
+    VIEWER  — ask questions, join calls, read transcripts. Cannot change
+              what the workspace knows.
+    MEMBER  — plus import repos and manage what is indexed.
+    OWNER   — plus connect/disconnect integrations, invite and remove people.
+    """
+    VIEWER = "viewer"
     MEMBER = "member"
+    OWNER = "owner"
 
 
 class Workspace(SQLModel, table=True):
@@ -69,6 +77,61 @@ class WorkspaceMember(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class WorkspaceInvite(SQLModel, table=True):
+    """One live invite code per workspace at a time.
+
+    Rotating replaces rather than accumulates: an owner who suspects a code
+    has leaked needs "make the old one stop working" to be one obvious
+    action, not a list to audit.
+    """
+    __tablename__ = "workspace_invites"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    code: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    created_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    revoked_at: Optional[datetime] = None
+
+
+class JoinRequestStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class WorkspaceJoinRequest(SQLModel, table=True):
+    """A code gets you as far as asking. An owner decides.
+
+    Holding the code is not the same as being trusted with a company's
+    private source, so the code proves you were pointed at this workspace,
+    and approval is what actually grants access.
+    """
+    __tablename__ = "workspace_join_requests"
+    id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    user_id: str = Field(sa_column=Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True))
+    status: JoinRequestStatus = JoinRequestStatus.PENDING
+    requested_at: datetime = Field(default_factory=datetime.utcnow)
+    decided_at: Optional[datetime] = None
+    decided_by: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    granted_role: Optional[WorkspaceRole] = None
+
+
+class WorkspaceMemberRead(SQLModel):
+    user_id: str
+    email: str
+    role: WorkspaceRole
+    joined_at: datetime
+
+
+class JoinRequestRead(SQLModel):
+    id: str
+    user_id: str
+    email: str
+    status: JoinRequestStatus
+    requested_at: datetime
+
+
 class WorkspaceCreate(SQLModel):
     name: str
 
@@ -88,10 +151,26 @@ class WorkspaceRead(SQLModel):
 # what's visible, and by tasks/ingestion.py to know which installation's
 # token to mint for cloning. See app/services/github_app_auth.py.
 
+class ConnectionScope(str, Enum):
+    """Who a connected source belongs to.
+
+    WORKSPACE — shared: every member's questions may draw on it.
+    USER      — private to the person who connected it. On a call it is
+                only used for turns attributed to that person (see the
+                speaker-identity plumbing), never for everyone.
+    """
+    WORKSPACE = "workspace"
+    USER = "user"
+
+
 class GitHubInstallation(SQLModel, table=True):
     __tablename__ = "github_installations"
     id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     workspace_id: str = Field(sa_column=Column(String, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True))
+    scope: ConnectionScope = ConnectionScope.WORKSPACE
+    # Set only when scope is USER. Kept nullable rather than defaulting to
+    # the connector so a workspace-scoped source has no misleading "owner".
+    owner_user_id: Optional[str] = Field(default=None, sa_column=Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True))
     installation_id: int = Field(sa_column=Column(Integer, unique=True, nullable=False, index=True))
     account_login: str
     account_type: str  # "User" or "Organization", as GitHub reports it

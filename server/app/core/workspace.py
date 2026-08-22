@@ -81,3 +81,39 @@ async def get_current_workspace(
     if not workspace:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     return workspace
+
+
+# ── Roles ────────────────────────────────────────────────────────────────
+# Ordered, so checks read as "at least MEMBER" rather than enumerating every
+# role that qualifies — which is what quietly goes wrong when a role is
+# added later and someone forgets one of the lists.
+_ROLE_ORDER = {WorkspaceRole.VIEWER: 0, WorkspaceRole.MEMBER: 1, WorkspaceRole.OWNER: 2}
+
+
+def role_at_least(role: WorkspaceRole, minimum: WorkspaceRole) -> bool:
+    return _ROLE_ORDER.get(role, -1) >= _ROLE_ORDER[minimum]
+
+
+def require_role(minimum: WorkspaceRole):
+    """FastAPI dependency factory: 403 unless the caller holds `minimum`.
+
+    403 here, not 404: the caller is a known member of a workspace they can
+    already see, so hiding its existence buys nothing and an honest "you
+    need a higher role" is far easier to act on. Non-members are still 404'd
+    earlier by get_current_workspace.
+    """
+
+    async def dependency(
+        workspace: Workspace = Depends(get_current_workspace),
+        session: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_user),
+    ) -> Workspace:
+        member = await membership_for(session, workspace.id, current_user.id)
+        if not member or not role_at_least(member.role, minimum):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This action needs the {minimum.value} role in this workspace",
+            )
+        return workspace
+
+    return dependency

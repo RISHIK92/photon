@@ -9,11 +9,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel, select
 
 from app.database import get_session
-from app.models import Repo, RepoCreate, RepoRead, RepoStatus, RepoSourceType, Job, User, Workspace
+from app.models import WorkspaceRole, Repo, RepoCreate, RepoRead, RepoStatus, RepoSourceType, Job, User, Workspace
 from app.config import get_settings
 from app.tasks.ingestion import run_ingestion
 from app.core.auth import get_current_user
-from app.core.workspace import get_current_workspace
+from app.core.workspace import get_current_workspace, require_role
 from app.services.estimate import estimate as compute_estimate, files_from_size_kb
 
 router = APIRouter()
@@ -81,7 +81,7 @@ async def create_repo(
     payload: RepoCreate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.MEMBER)),
 ):
     """Connect a repository (GitHub URL or local path)."""
     repo = Repo(**payload.model_dump(), owner_id=current_user.id, workspace_id=workspace.id)
@@ -178,7 +178,7 @@ async def delete_repo(
     repo_id: str,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
-    workspace: Workspace = Depends(get_current_workspace),
+    workspace: Workspace = Depends(require_role(WorkspaceRole.MEMBER)),
 ):
     repo = await session.get(Repo, repo_id)
     if not repo:
