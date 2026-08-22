@@ -1,9 +1,11 @@
 # Photon — Company Brain + Live Call Support Agent
 
 Layout note: this repo uses `client/` (frontend, was `apps/console` in the
-original plan) and `server/` (backend, was `services/brain-api`). All plan
-references to `services/brain-api` mean `server/`; all references to
-`apps/console` mean `client/`.
+original plan), `server/` (backend, was `services/brain-api`), and
+`call-agent/` (was `services/call-agent/`). All plan references to
+`services/brain-api` mean `server/`; `apps/console` means `client/`;
+`services/call-agent` means `call-agent/`. `apps/call` (the join page)
+lives at `client/app/call/`.
 
 ## LLM providers — text vs vision split (resolved the Gemini quota blocker)
 
@@ -36,10 +38,103 @@ dedicated OpenRouter tier or a different model, not more retry tuning.
 
 ## Current phase
 
-**Phase 3 — Agent loop.** Phase 0 (environment) is complete except for the
-manual two-person LiveKit transport test (not a blocker for Phase 1/2/3
-work). Phase 1 (seed corpus) and Phase 2 (tool layer) are complete — see
-their sections below. Phase 3 status below.
+**Phase 4 — Live call transport.** Phase 0 (environment) is complete —
+the manual two-person LiveKit test from its checklist is superseded by
+the Phase 4 live verification below (worker joined a real room, real
+Deepgram STT/TTS). Phases 1-3 are complete — see their sections below.
+Phase 4 status below.
+
+### Phase 4 — live call transport (done)
+
+New top-level service, `call-agent/`, with its **own venv** — same reason
+as the CLAUDE.md gotcha above: `livekit-api` force-upgrades `protobuf` and
+would break `server/.venv`'s Gemini/embedding stack if shared. `call-agent/`
+and `server/` only ever talk over plain HTTP (`POST /api/agent/ask`).
+
+- `call-agent/adapters/base.py` — the transport boundary contract: three
+  methods (`speak`/`cancel_speech`/`announce`, implemented by a concrete
+  adapter, called by the orchestrator) and two callbacks (`on_speech`/
+  `on_frame`, implemented by the orchestrator as `SessionCallbacks`,
+  called by the adapter). Split into two Protocols since the plan's single
+  combined code block conflates "implemented by" and "called by" — see
+  the module docstring for why.
+- `call-agent/orchestrator.py` — `Orchestrator` (implements
+  `SessionCallbacks`): explicit wake-word gating (only a turn starting
+  with "Photon" triggers anything — see build plan Phase 4 for why this
+  beats open-mic/turn-detection), rolling transcript, latest-screen-frame
+  buffer (gated on `source == "screen"`, camera frames are dropped),
+  `POST {BRAIN_API_URL}/api/agent/ask` on every addressed turn, hands the
+  answer to `adapter.speak()`. Zero LiveKit imports — verified directly by
+  running it against a `MockAdapter` with no transport in the loop at all
+  (see verification below), same spirit as `server/tests/test_agent_loop.py`.
+- `call-agent/adapters/livekit_adapter.py` — the one `TransportAdapter`
+  implementation. `AgentSession(stt=deepgram.STT(model="nova-3"),
+  tts=deepgram.TTS(model="aura-2-thalia-en"), vad=silero.VAD.load())`, a
+  custom `Agent` subclass whose `on_user_turn_completed` hook forwards
+  every turn to the orchestrator's `on_speech` and always raises
+  `StopResponse()` — LiveKit's own (unconfigured) LLM node never runs;
+  the orchestrator/brain-api is the only thing that ever composes an
+  answer. Screen-share frames are pumped from a dedicated `track_subscribed`
+  handler filtered to `rtc.TrackSource.SOURCE_SCREENSHARE` (never
+  `SOURCE_CAMERA`), throttled to ~1fps speaking / ~0.3fps idle via
+  `session.user_state`, resized/JPEG-encoded via Pillow, capped at 1024px.
+- `call-agent/worker.py` — entrypoint; `python3 worker.py dev` for local
+  testing, `start` for prod. Every API call/method used here
+  (`AgentSession`, `Agent.on_user_turn_completed`, `StopResponse`,
+  `RoomInputOptions`, `rtc.VideoStream.from_track`, `rtc.TrackSource`) was
+  verified against the actually-installed `livekit-agents==1.7.0`'s real
+  signatures via `inspect`, not assumed from training-data familiarity
+  with older SDK versions — this API has moved a lot across majors.
+- `client/app/api/livekit-token/route.ts` — mints a join token
+  server-side (holds `LIVEKIT_API_SECRET`, never sent to the browser).
+- `client/app/call/page.tsx` — the join page: mic/screen-share toggles via
+  `livekit-client` (`setMicrophoneEnabled`/`setScreenShareEnabled`), live
+  captions from `RoomEvent.TranscriptionReceived`, and a text-input
+  fallback that calls `POST /api/agent/ask` directly (bypassing voice
+  entirely) — satisfies the Definition of Done's "text-input fallback
+  works if audio fails" without depending on the call-agent service at all.
+
+**Live-verified, not just written and assumed correct** (this environment
+has no real microphone, so audio content itself can't be tested, but
+everything up to and around that boundary was):
+1. `python3 worker.py dev` registered with LiveKit Cloud for real —
+   `"registered worker" {"id": "AW_...", "url": "wss://photon-
+   ter1p8y0.livekit.cloud", "region": "India South"}`.
+2. A real second participant (a throwaway script using `livekit.rtc.Room`,
+   playing the human) joined a real room and the worker was dispatched,
+   joined as `agent-AJ_...`, and ran `entrypoint()` end to end with no
+   errors.
+3. Real Deepgram STT and TTS WebSocket connections were established
+   (visible in the worker's own debug log).
+4. `announce()` actually spoke: the log shows `conversation_item_added
+   {role: assistant, text: "Hi, I'm Meridian's support agent..."}` —
+   confirms `adapter.speak()` -> `session.say()` -> real TTS synthesis
+   worked, not just that the call didn't throw.
+5. Clean shutdown on participant disconnect, confirmed in the log.
+6. `orchestrator.py` run standalone against a `MockAdapter` (no LiveKit
+   object anywhere in the process): unaddressed speech correctly ignored,
+   interim (non-final) speech correctly ignored, camera frames correctly
+   never treated as screen frames, and an addressed question ("Photon,
+   why does pricing have a special case for Bangalore?") correctly
+   triggered a real HTTP call to the live brain-api and produced a
+   fully-grounded S2 answer via `adapter.speak()`.
+7. The Next.js `/call` page and `/api/livekit-token` route both compile
+   and serve (200) under `next dev`; the token route mints a real,
+   correctly-scoped JWT.
+
+**Known gaps, honestly**: real audio in/out (a human speaking, hearing the
+agent) is untested — this environment has no microphone/speaker to drive
+that, so it needs an actual human on a real call, same as the Phase 0
+LiveKit box that was never checked off. Screen-frame capture
+(`_pump_screen_frames`) is written against a verified API but never
+exercised with a live screen-share track — lowest priority per the plan's
+own cut order ("Screen share / vision — First to go"). `RoomInputOptions`
+logged a deprecation warning in favor of `RoomOptions` in 1.7.0 — still
+functionally correct, not yet migrated.
+
+Not built yet: the evidence panel (Phase 5) — the join page above is
+functional but has no citation/evidence UI yet, just live captions and a
+plain text Q&A fallback.
 
 ### Phase 3 — agent loop (done)
 
