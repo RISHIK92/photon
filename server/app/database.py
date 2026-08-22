@@ -70,6 +70,18 @@ async def create_db_and_tables() -> None:
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_slack_channels_workspace ON slack_channels (workspace_id)"
         ))
+        # Call configuration added after `meetings` already existed. JSONB
+        # rather than JSON: it is what Postgres actually wants for these,
+        # and the columns are new so there is nothing to convert.
+        await conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS bot_types JSONB DEFAULT '[\"support\"]'::jsonb"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS language_mode VARCHAR DEFAULT 'english'"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS enabled_sources JSONB"
+        ))
         # GitHub App support: OAuth login linking (users.github_id/login,
         # password now optional) and per-repo installation tagging (for the
         # picker's already-imported diff and installation-token cloning).

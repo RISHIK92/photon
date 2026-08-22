@@ -363,6 +363,18 @@ class Meeting(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     ended_at: Optional[datetime] = None
 
+    # ── Call configuration, chosen before joining ──────────────────────
+    # What the agent is FOR on this call. Multiple allowed: a call can be
+    # both technical and onboarding, and the personas compose.
+    bot_types: list = Field(default_factory=lambda: ["support"], sa_column=Column(JSON))
+    # "english" or "multilingual" — this picks the voice stack (Deepgram vs
+    # Sarvam), which is a per-call decision, not a per-deployment one.
+    language_mode: str = "english"
+    # Source group keys the agent may draw on for this call. Empty list is
+    # meaningful (agent has nothing) and is NOT the same as null (use the
+    # workspace defaults), which is why it is nullable.
+    enabled_sources: Optional[list] = Field(default=None, sa_column=Column(JSON))
+
 
 class TranscriptRole(str, Enum):
     HUMAN = "human"
@@ -398,6 +410,9 @@ class MeetingRead(SQLModel):
     slug: str
     title: Optional[str]
     workspace_id: str
+    bot_types: list = []
+    language_mode: str = "english"
+    enabled_sources: Optional[list] = None
     created_at: datetime
     ended_at: Optional[datetime]
 

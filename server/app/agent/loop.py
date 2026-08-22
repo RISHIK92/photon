@@ -12,6 +12,7 @@ import structlog
 
 from app.agent.events import EventSink, TurnTracer
 from app.agent.llm import extract_json, generate
+from app.agent.personas import personas_prompt
 from app.agent.prompts import build_compose_prompt, build_plan_prompt
 from app.core.llm.vision import describe_screen
 from app.agent.verifier import verify
@@ -66,6 +67,7 @@ async def _run_one_call(
     round_num: int,
     workspace_id: str | None = None,
     known_repo_ids: set[str] | None = None,
+    allowed_tools: set[str] | None = None,
 ) -> dict:
     tool_name = call.get("tool")
     args = dict(call.get("args") or {})
@@ -90,6 +92,19 @@ async def _run_one_call(
                 args.pop("repo_id", None)
             if workspace_id and tool_name in _WORKSPACE_SEARCHABLE_TOOLS:
                 args["workspace_id"] = workspace_id
+
+    if allowed_tools is not None and tool_name not in allowed_tools:
+        # The planner should not have seen this tool at all; refusing here
+        # too means a prompt-injection or a stale plan cannot reach a source
+        # the call was configured to exclude.
+        tracer.emit("tool.blocked", id=call_id, tool=tool_name, round=round_num)
+        return {
+            "tool": tool_name,
+            "args": args,
+            "result": {"tool": tool_name, "status": "error", "evidence": [],
+                       "note": f"{tool_name} is not enabled for this call"},
+            "ms": 0,
+        }
 
     if tool_name in _WORKSPACE_ID_TOOLS:
         # Always overwrite, never default: a planner-supplied value here
@@ -194,6 +209,8 @@ async def answer_question(
     on_event: EventSink | None = None,
     language: str | None = None,
     workspace_id: str | None = None,
+    allowed_tools: set[str] | None = None,
+    bot_types: list[str] | None = None,
 ) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
     escalation, tool_trace}. Safe to call with no call/session in progress.
@@ -312,6 +329,7 @@ async def answer_question(
                     round_num + 1,
                     workspace_id=workspace_id,
                     known_repo_ids=known_repo_ids,
+                    allowed_tools=allowed_tools,
                 )
                 for i, c in enumerate(calls)
             ]
@@ -376,7 +394,9 @@ async def answer_question(
     # on purpose: tool names, the account directory and the corpus are all
     # English, and translating the planner's input buys nothing but a new
     # way for tool selection to go wrong.
-    compose_prompt = build_compose_prompt(question, compose_evidence, language=language)
+    compose_prompt = build_compose_prompt(
+        question, compose_evidence, language=language, persona_prompt=personas_prompt(bot_types)
+    )
     tracer.emit("compose.start", evidence_count=len(compose_evidence), language=language or "en-IN")
     compose_started = time.monotonic()
     raw_composed = await generate(compose_prompt, max_output_tokens=700, temperature=0.1, json_mode=True)

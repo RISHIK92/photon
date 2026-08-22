@@ -132,9 +132,15 @@ service's own logs to answer that accurately.", "claims": [], "abstained": true,
 """
 
 
-def _format_schemas() -> str:
+def _format_schemas(allowed: set[str] | None = None) -> str:
     lines = []
     for t in TOOL_SCHEMAS:
+        if allowed is not None and t["name"] not in allowed:
+            # Tools the workspace cannot use are not shown at all rather
+            # than listed-and-forbidden: a planner that can see a tool will
+            # eventually call it, get nothing, and sometimes conclude the
+            # absence is an answer.
+            continue
         params = ", ".join(
             f"{k}{'' if v.get('required') else '?'}: {v['type']}" for k, v in t["parameters"].items()
         )
@@ -202,6 +208,7 @@ def build_plan_prompt(
     is_first_round: bool = True,
     language: str | None = None,
     known_repos: list[dict] | None = None,
+    allowed_tools: set[str] | None = None,
 ) -> str:
     screen_block = f"Screen context (customer is sharing their screen): {screen_context}\n" if screen_context else ""
     context_block = f"{context}\n" if context else ""
@@ -235,7 +242,7 @@ def build_plan_prompt(
 
     return _PLAN_PROMPT.format(
         system_rules=SYSTEM_RULES,
-        tool_schemas=_format_schemas(),
+        tool_schemas=_format_schemas(allowed_tools),
         known_accounts=_format_accounts(),
         context_block=context_block,
         question=question,
@@ -262,7 +269,12 @@ Each claim's "text" must still be a verbatim substring of your {language_name} a
 """
 
 
-def build_compose_prompt(question: str, evidence: list[dict], language: str | None = None) -> str:
+def build_compose_prompt(
+    question: str,
+    evidence: list[dict],
+    language: str | None = None,
+    persona_prompt: str | None = None,
+) -> str:
     # No separate screen_context here on purpose: a screen-frame description
     # is folded into `evidence` as a citable ("screen" source_type) item by
     # app.agent.loop, exactly like a tool result. Passing it a second time
@@ -279,6 +291,11 @@ def build_compose_prompt(question: str, evidence: list[dict], language: str | No
     # into SYSTEM_RULES, so it is the last and most specific instruction the
     # model reads — the few-shot examples would otherwise pull the answer
     # back into English.
+    if persona_prompt:
+        # Before the language block so language stays the LAST and most
+        # specific instruction — the examples above are English and will
+        # otherwise pull the answer back.
+        prompt += persona_prompt
     if language and language != "en-IN":
         prompt += _LANGUAGE_BLOCK.format(language_name=LANGUAGE_NAMES.get(language, language))
     return prompt

@@ -10,7 +10,40 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from fastapi import Depends
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.agent.loop import answer_question
+from app.database import get_session
+from app.models import Meeting
+from app.services.meeting_slug import normalise
+from app.services.tool_availability import source_groups, tools_for
+
+
+async def _call_config(session, payload) -> dict:
+    """Persona + allowed tools for this request.
+
+    Returns empty when no meeting is given, which keeps the text console and
+    the tests working exactly as before (all tools, default persona).
+    """
+    if not payload.meeting_slug:
+        return {}
+    result = await session.execute(select(Meeting).where(Meeting.slug == normalise(payload.meeting_slug)))
+    meeting = result.scalars().first()
+    if not meeting:
+        return {}
+    groups = await source_groups(session, meeting.workspace_id)
+    enabled = meeting.enabled_sources
+    if enabled is None:
+        from app.services.tool_availability import default_enabled_keys
+
+        enabled = default_enabled_keys(groups)
+    return {
+        "allowed_tools": set(tools_for(groups, enabled)),
+        "bot_types": meeting.bot_types or ["support"],
+        "workspace_id": meeting.workspace_id,
+    }
 
 router = APIRouter()
 
@@ -24,6 +57,11 @@ class AgentAskRequest(BaseModel):
     # Which tenant's connected sources may be searched. Absent = the demo
     # corpus only, which is what keeps the seeded scenarios working.
     workspace_id: Optional[str] = None
+    # When present, the call's own configuration decides the persona and
+    # which sources may be used. Resolved server-side rather than trusted
+    # from the caller: the worker should not be able to widen a call's
+    # source list by sending a different payload.
+    meeting_slug: Optional[str] = None
     # Only consulted when repo_id is omitted — lets the loop disambiguate
     # across a workspace's repos instead of falling back to the single
     # seed repo. This endpoint is still unauthenticated (see CLAUDE.md's
@@ -31,6 +69,11 @@ class AgentAskRequest(BaseModel):
     # against a session — the same trust boundary as everything else on
     # this route today, not a new gap introduced by this field.
     workspace_id: Optional[str] = None
+    # When present, the call's own configuration decides the persona and
+    # which sources may be used. Resolved server-side rather than trusted
+    # from the caller: the worker should not be able to widen a call's
+    # source list by sending a different payload.
+    meeting_slug: Optional[str] = None
 
 
 def _decode_frame(payload: "AgentAskRequest") -> Optional[bytes]:
@@ -43,7 +86,7 @@ def _decode_frame(payload: "AgentAskRequest") -> Optional[bytes]:
 
 
 @router.post("/ask/stream")
-async def ask_stream(payload: AgentAskRequest):
+async def ask_stream(payload: AgentAskRequest, session: AsyncSession = Depends(get_session)):
     """Server-sent events for one turn, emitted AS IT HAPPENS: plan.start,
     tool.start/tool.done (with per-tool ms), compose, verify, turn.done.
 
@@ -55,6 +98,7 @@ async def ask_stream(payload: AgentAskRequest):
     running while it's still running.
     """
     screen_image_bytes = _decode_frame(payload)
+    config = await _call_config(session, payload)
     queue: asyncio.Queue[Optional[dict[str, Any]]] = asyncio.Queue()
 
     def sink(event: dict[str, Any]) -> None:
@@ -72,7 +116,9 @@ async def ask_stream(payload: AgentAskRequest):
                 screen_image_bytes,
                 on_event=sink,
                 language=payload.language,
-                workspace_id=payload.workspace_id,
+                workspace_id=config.get("workspace_id") or payload.workspace_id,
+                allowed_tools=config.get("allowed_tools"),
+                bot_types=config.get("bot_types"),
             )
         except Exception as exc:  # noqa: BLE001 - report the failure to the client, don't hang it
             queue.put_nowait({"type": "turn.error", "t": 0, "seq": 0, "error": str(exc)})
@@ -101,8 +147,13 @@ async def ask_stream(payload: AgentAskRequest):
 
 
 @router.post("/ask")
-async def ask(payload: AgentAskRequest, stream: bool = Query(default=False)):
+async def ask(
+    payload: AgentAskRequest,
+    stream: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+):
     screen_image_bytes = _decode_frame(payload)
+    config = await _call_config(session, payload)
 
     result = await answer_question(
         payload.question,
@@ -110,7 +161,9 @@ async def ask(payload: AgentAskRequest, stream: bool = Query(default=False)):
         payload.screen_context,
         screen_image_bytes,
         language=payload.language,
-        workspace_id=payload.workspace_id,
+        workspace_id=config.get("workspace_id") or payload.workspace_id,
+        allowed_tools=config.get("allowed_tools"),
+        bot_types=config.get("bot_types"),
     )
 
     if not stream:

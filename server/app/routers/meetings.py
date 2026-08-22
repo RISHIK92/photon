@@ -37,6 +37,17 @@ router = APIRouter()
 
 class MeetingCreate(SQLModel):
     title: Optional[str] = None
+    bot_types: list[str] = ["support"]
+    language_mode: str = "english"
+    # None = fall back to the workspace defaults (GitHub + custom docs where
+    # they have data). An empty list is a deliberate "no sources".
+    enabled_sources: Optional[list[str]] = None
+
+
+class MeetingConfig(SQLModel):
+    bot_types: Optional[list[str]] = None
+    language_mode: Optional[str] = None
+    enabled_sources: Optional[list[str]] = None
 
 
 @router.post("", response_model=MeetingRead, status_code=201)
@@ -55,8 +66,21 @@ async def create_meeting(
     else:
         raise HTTPException(status_code=500, detail="Could not allocate a meeting code")
 
+    from app.services.tool_availability import default_enabled_keys, source_groups
+
+    groups = await source_groups(session, workspace.id)
     meeting = Meeting(
-        slug=slug, workspace_id=workspace.id, title=payload.title, created_by=current_user.id
+        slug=slug,
+        workspace_id=workspace.id,
+        title=payload.title,
+        created_by=current_user.id,
+        bot_types=payload.bot_types or ["support"],
+        language_mode=payload.language_mode or "english",
+        enabled_sources=(
+            payload.enabled_sources
+            if payload.enabled_sources is not None
+            else default_enabled_keys(groups)
+        ),
     )
     session.add(meeting)
     await session.commit()
@@ -193,6 +217,63 @@ async def end_meeting(
     if not await membership_for(session, meeting.workspace_id, current_user.id):
         raise HTTPException(status_code=404, detail="No meeting with that code")
     meeting.ended_at = meeting.ended_at or datetime.utcnow()
+    session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
+    return meeting
+
+
+@router.get("/options/catalog")
+async def call_options(
+    session: AsyncSession = Depends(get_session),
+    workspace: Workspace = Depends(get_current_workspace),
+):
+    """Everything the pre-call screen needs: bot types, language modes, and
+    which sources this workspace can actually use right now."""
+    from app.agent.personas import catalog as persona_catalog
+    from app.services.tool_availability import default_enabled_keys, source_groups
+
+    groups = await source_groups(session, workspace.id)
+    return {
+        "bot_types": persona_catalog(),
+        "language_modes": [
+            {"key": "english", "label": "English only",
+             "detail": "Deepgram — lower latency, English voices"},
+            {"key": "multilingual", "label": "Multilingual",
+             "detail": "Sarvam — Telugu, Tamil, Hindi and English"},
+        ],
+        "sources": [
+            {
+                "key": g.key, "label": g.label, "available": g.available,
+                "detail": g.detail, "default_enabled": g.default_enabled,
+                "coming_soon": g.coming_soon, "tools": g.tools,
+            }
+            for g in groups
+        ],
+        "default_enabled": default_enabled_keys(groups),
+    }
+
+
+@router.patch("/{slug}/config", response_model=MeetingRead)
+async def update_config(
+    slug: str,
+    payload: MeetingConfig,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Change a call's setup. Allowed mid-call on purpose: people discover
+    they need Jira three questions in, and making them restart the call to
+    enable it would be worse than letting them toggle it live."""
+    meeting = await _meeting_by_slug(session, slug)
+    if not await membership_for(session, meeting.workspace_id, current_user.id):
+        raise HTTPException(status_code=404, detail="No meeting with that code")
+
+    if payload.bot_types is not None:
+        meeting.bot_types = payload.bot_types
+    if payload.language_mode is not None:
+        meeting.language_mode = payload.language_mode
+    if payload.enabled_sources is not None:
+        meeting.enabled_sources = payload.enabled_sources
     session.add(meeting)
     await session.commit()
     await session.refresh(meeting)
