@@ -8,7 +8,10 @@ import EvidencePanel from "./EvidencePanel";
 import AccountSummary from "./AccountSummary";
 import CaptionsBridge from "./CaptionsBridge";
 import CaptionsPanel from "./CaptionsPanel";
+import TraceBridge from "./TraceBridge";
+import AdvancedPanel from "./AdvancedPanel";
 import { mergeCaption, type Caption } from "@/lib/captions";
+import { applyTraceEvent, type TraceEvent, type TurnTrace } from "@/lib/trace";
 
 const BRAIN_API_URL = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
@@ -23,6 +26,7 @@ export default function CallPage() {
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [traces, setTraces] = useState<TurnTrace[]>([]);
   const [textInput, setTextInput] = useState("");
   const [textBusy, setTextBusy] = useState(false);
 
@@ -56,31 +60,32 @@ export default function CallPage() {
     setCaptions((prev) => mergeCaption(prev, caption));
   }, []);
 
+  // One reducer for both feeds: voice events arrive over the LiveKit data
+  // channel (TraceBridge), text events over SSE from askByText below.
+  const onTraceEvent = useCallback((event: TraceEvent, fallbackTurnId = "voice") => {
+    setTraces((prev) => applyTraceEvent(prev, event, fallbackTurnId));
+  }, []);
+
+  const onVoiceTraceEvent = useCallback(
+    (event: TraceEvent) => onTraceEvent(event, "voice"),
+    [onTraceEvent]
+  );
+
   const askByText = useCallback(async () => {
     const question = textInput.trim();
     if (!question || textBusy) return;
     setTextInput("");
     setTurns((prev) => [...prev, { role: "user", question }, { role: "agent" }]);
     setTextBusy(true);
-    try {
-      const res = await fetch(`${BRAIN_API_URL}/api/agent/ask`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
-      });
-      const result: AgentAnswer = await res.json();
-      setTurns((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = { role: "agent", result };
-        return next;
-      });
-    } catch (e) {
+
+    const turnId = `text-${Date.now()}`;
+    const fail = (message: string) => {
       setTurns((prev) => {
         const next = [...prev];
         next[next.length - 1] = {
           role: "agent",
           result: {
-            answer: `Error reaching the agent: ${e instanceof Error ? e.message : String(e)}`,
+            answer: message,
             claims: [],
             confidence: "low",
             abstained: true,
@@ -90,10 +95,55 @@ export default function CallPage() {
         };
         return next;
       });
+    };
+
+    try {
+      // The event stream, not the plain POST: same answer, but the
+      // advanced panel gets each plan/tool/compose step as it happens
+      // instead of a single silent wait of tens of seconds.
+      const res = await fetch(`${BRAIN_API_URL}/api/agent/ask/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      if (!res.ok || !res.body) throw new Error(`brain-api returned ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let result: AgentAnswer | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are separated by a blank line; a chunk can split one
+        // in half, so keep the trailing partial frame in the buffer.
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const event = JSON.parse(line.slice(6)) as TraceEvent;
+          onTraceEvent(event, turnId);
+          if (event.type === "turn.done") result = event.result as AgentAnswer;
+          if (event.type === "turn.error") throw new Error(String(event.error));
+        }
+      }
+
+      if (!result) throw new Error("the stream ended before the answer arrived");
+      const answer = result;
+      setTurns((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { role: "agent", result: answer };
+        return next;
+      });
+    } catch (e) {
+      fail(`Error reaching the agent: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setTextBusy(false);
     }
-  }, [textInput, textBusy]);
+  }, [textInput, textBusy, onTraceEvent]);
 
   return (
     <div className="h-screen bg-neutral-950 text-neutral-100 flex flex-col overflow-hidden">
@@ -143,19 +193,23 @@ export default function CallPage() {
                 >
                   <VideoConference />
                   <CaptionsBridge onCaption={onCaption} />
+                  <TraceBridge onEvent={onVoiceTraceEvent} />
                 </LiveKitRoom>
               </div>
 
-              <div className="shrink-0">
-                <CaptionsPanel captions={captions} />
-              </div>
             </>
           )}
 
-          {/* Note: this evidence panel currently only reflects the text-input
-              path on the right. The voice path (call-agent's orchestrator)
-              speaks its answer via TTS but doesn't yet broadcast the
-              structured result back to the browser — see CLAUDE.md Phase 5. */}
+          {/* Transcript and the advanced pipeline view side by side — what
+              was said on the left, what the agent did about it on the
+              right, sharing one timeline. Outside the connected branch on
+              purpose: the text fallback works without joining the call, and
+              its pipeline is worth watching either way. */}
+          <div className="shrink-0 grid grid-cols-1 lg:grid-cols-2 gap-4 mt-auto">
+            <CaptionsPanel captions={captions} connected={state === "connected"} />
+            <AdvancedPanel turns={traces} />
+          </div>
+
         </section>
 
         <section className="flex flex-col min-h-0 h-full bg-neutral-900/30 border border-neutral-800 rounded-lg p-4">

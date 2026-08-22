@@ -109,6 +109,87 @@ cut order ranks tight voice/UI sync low ("tool trace pills, live — nice,
 not load-bearing"). Noting it here rather than silently leaving the
 question unaddressed.
 
+### Feature — live pipeline trace ("Advanced" panel beside the captions)
+
+The user asked to see latency in real time, which tool is being called
+internally, and the whole flow — in an advanced panel beside the
+captions. The blocker: `answer_question()` only ever returned its
+finished `tool_trace` at the end, so nothing at all was observable
+*during* a turn (and turns run tens of seconds — see the DeepSeek latency
+notes above). Every layer needed a way to report progress as it happened.
+
+**Server — `server/app/agent/events.py` (new)**: `TurnTracer` stamps each
+event with `t` (ms since turn start) and `seq`, and forwards it to a
+plain callable sink. Deliberately a callable, not a queue/stream/socket:
+`app/agent/` must stay transport-free (Section 5), so the loop never
+learns who is listening. A tracer with no sink is a no-op, and a sink
+that raises is caught — tracing can never break the turn it traces.
+
+- `app/agent/loop.py` — `answer_question(..., on_event=None)`. Emits
+  `turn.start`, `vision.start/done`, `plan.start/retry/done` (per round,
+  with the chosen tools), `tool.start`/`tool.done` (per call, with ms /
+  status / evidence count), `evidence.gathered`, `compose.start/done`
+  (incl. `parsed:false` for the known DeepSeek JSON flakiness),
+  `verify.done` (claims in vs kept), `turn.done`. `tool.start` fires
+  BEFORE the await, so a tool shows as running for the whole time it
+  actually runs. The answer is byte-for-byte identical with or without a
+  sink.
+- `app/routers/agent.py` — `POST /api/agent/ask/stream`, SSE. Distinct
+  from the pre-existing `/ask?stream=true`, which runs the entire turn
+  first and only then chunks the finished answer word by word — useless
+  for latency, since nothing is sent until everything is over. A
+  disconnecting client cancels the turn task rather than orphaning it.
+
+**call-agent — the transport contract widened to 4 methods**: `speak` is
+the answer for the human's ear; `publish_event` is everything *about* the
+answer that belongs on a screen. `adapters/base.py` documents it as
+optional-by-degradation (a platform with no data channel no-ops it and
+loses only the panel). `livekit_adapter.py` implements it via
+`publish_data(..., reliable=True, topic="photon.trace")`.
+`orchestrator.py` now consumes `/ask/stream` instead of `/ask` and
+republishes every event into the room, tagged `source: "voice"` and a
+`turn_id`. **This closes the Phase 5 "known gap" above** for trace data
+(the structured answer/evidence still isn't republished — only the
+pipeline events are).
+
+**Client** — one reducer, two feeds:
+- `client/lib/trace.ts` — `applyTraceEvent()` folds flat events into
+  `TurnTrace` {stages, tools, totals, status}. Dedupes by `seq` (a
+  re-delivered data packet would otherwise duplicate a tool row) and
+  marks any still-running stage as failed when the turn ends, so nothing
+  spins forever.
+- `client/app/call/TraceBridge.tsx` — voice feed, filters
+  `RoomEvent.DataReceived` on the `photon.trace` topic.
+- `client/app/call/page.tsx` — the text path now reads the SSE stream
+  (with proper partial-frame buffering) instead of a plain POST, feeding
+  the same reducer; both panels moved OUT of the connected-only branch,
+  since the text fallback works without joining the call.
+- `client/app/call/AdvancedPanel.tsx` — ticking elapsed clock (100ms,
+  frozen on the server's authoritative total once done), a voice/text
+  badge, per-stage rows with tool calls nested under the plan round that
+  chose them, bars scaled to the slowest step *in that turn*, and a
+  totals footer (total / tool ms / llm ms).
+
+**Live-verified in a real browser**, text path end to end: the panel
+showed `Plan · round 1` running, then "chose search_code, explain_why"
+at 8.8s with both tools live in amber "running…", then each completing
+at 1.2s, `Plan · round 2` "no further tools needed" 1.7s, `Evidence
+deduped 9 unique of 10`, `Compose answer` 27.4s, `Verify citations
+4 claim(s) kept` 1ms — footer `total 39.2s · 2 tool calls 2.4s · llm
+38.0s · confidence high`, alongside a correct grounded answer.
+
+**What that immediately exposed** (the point of building it): on a real
+S2 question, tools are 2.4s of a 39.2s turn — **97% of the latency is
+LLM time**, and 27.4s of it is the single compose call. Any future
+latency work belongs there (smaller compose prompt, a faster model, or
+streaming compose), not in tool optimization.
+
+**Not verified live**: the voice half. The events are published over the
+LiveKit data channel, but the running worker was started before these
+changes and its prewarmed process still holds the old modules — **the
+`worker.py dev` process must be restarted for voice turns to emit any
+trace at all.** The user is running the live call tests.
+
 ### Change — captions split by speaker (caller vs Photon)
 
 The user asked for the live captions to visibly separate the human from

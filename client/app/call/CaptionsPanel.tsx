@@ -8,7 +8,13 @@ import type { Caption } from "@/lib/captions";
  * own avatar, name label and bubble. Interim (non-final) segments render
  * dimmed with a pulsing caret so it's obvious which line is still being
  * transcribed rather than settled. */
-export default function CaptionsPanel({ captions }: { captions: Caption[] }) {
+export default function CaptionsPanel({
+  captions,
+  connected = true,
+}: {
+  captions: Caption[];
+  connected?: boolean;
+}) {
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -31,7 +37,9 @@ export default function CaptionsPanel({ captions }: { captions: Caption[] }) {
 
       <div className="bg-neutral-900 border border-neutral-800 rounded p-3 h-36 overflow-y-auto space-y-2">
         {captions.length === 0 && (
-          <p className="text-neutral-600 text-xs">Waiting for someone to speak…</p>
+          <p className="text-neutral-600 text-xs">
+            {connected ? "Waiting for someone to speak…" : "Join the call to see live captions."}
+          </p>
         )}
         {captions.map((c) => (
           <CaptionRow key={c.id} caption={c} />

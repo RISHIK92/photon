@@ -10,6 +10,7 @@ import time
 
 import structlog
 
+from app.agent.events import EventSink, TurnTracer
 from app.agent.llm import extract_json, generate
 from app.agent.prompts import build_compose_prompt, build_plan_prompt
 from app.core.llm.vision import describe_screen
@@ -27,7 +28,13 @@ MAX_CALLS_PER_ROUND = 4
 _REPO_ID_TOOLS = {t["name"] for t in TOOL_SCHEMAS if "repo_id" in t["parameters"]}
 
 
-async def _run_one_call(call: dict, repo_id: str | None) -> dict:
+async def _run_one_call(
+    call: dict,
+    repo_id: str | None,
+    tracer: TurnTracer,
+    call_id: str,
+    round_num: int,
+) -> dict:
     tool_name = call.get("tool")
     args = dict(call.get("args") or {})
     if repo_id and tool_name in _REPO_ID_TOOLS:
@@ -36,6 +43,11 @@ async def _run_one_call(call: dict, repo_id: str | None) -> dict:
         # wrong guess (e.g. "meridian") silently empties out code evidence
         # instead of erroring, which is much worse (caught while testing).
         args["repo_id"] = repo_id
+
+    # Emitted BEFORE the await, so a client sees "search_code running…"
+    # for the whole time it actually runs rather than only learning about
+    # it once it's already finished.
+    tracer.emit("tool.start", id=call_id, tool=tool_name, args=args, round=round_num)
 
     start = time.monotonic()
     try:
@@ -48,6 +60,15 @@ async def _run_one_call(call: dict, repo_id: str | None) -> dict:
         log.error("agent.tool_call_error", tool=tool_name, error=str(exc))
         result = {"tool": tool_name, "status": "error", "evidence": [], "note": str(exc)}
     ms = int((time.monotonic() - start) * 1000)
+    tracer.emit(
+        "tool.done",
+        id=call_id,
+        tool=tool_name,
+        ms=ms,
+        status=result.get("status"),
+        evidence_count=len(result.get("evidence", [])),
+        note=result.get("note"),
+    )
 
     return {"tool": tool_name, "args": args, "result": result, "ms": ms}
 
@@ -69,6 +90,7 @@ async def answer_question(
     repo_id: str | None = None,
     screen_context: str | None = None,
     screen_image_bytes: bytes | None = None,
+    on_event: EventSink | None = None,
 ) -> dict:
     """The Section 4 answer contract: {answer, claims, confidence, abstained,
     escalation, tool_trace}. Safe to call with no call/session in progress.
@@ -81,9 +103,17 @@ async def answer_question(
     a tool result — NOT passed to the LLM as raw unverifiable prose, so
     the same "no uncited claim" rule applies to what the customer sees on
     screen as to everything else.
+
+    on_event: optional sink for real-time stage/tool/latency events (see
+    app.agent.events). Purely observational — the answer is byte-for-byte
+    identical with or without it, and the loop never learns who's
+    listening, so the transport-free rule still holds.
     """
     if repo_id is None:
         repo_id = get_seed_repo_id()
+
+    tracer = TurnTracer(on_event)
+    tracer.emit("turn.start", question=question)
 
     all_evidence: list[dict] = []
     tool_trace: list[dict] = []
@@ -91,9 +121,11 @@ async def answer_question(
     total_calls = 0
 
     if screen_image_bytes:
+        tracer.emit("vision.start", bytes=len(screen_image_bytes))
         start = time.monotonic()
         description = await describe_screen(screen_image_bytes, question)
         ms = int((time.monotonic() - start) * 1000)
+        tracer.emit("vision.done", ms=ms, ok=bool(description))
         if description:
             frame_hash = hashlib.sha1(screen_image_bytes).hexdigest()[:10]
             screen_evidence = make_evidence("screen", f"screen:{frame_hash}", description, 1.0)
@@ -112,6 +144,8 @@ async def answer_question(
             break
 
         plan_prompt = build_plan_prompt(question, context_log, screen_context, is_first_round=(round_num == 0))
+        tracer.emit("plan.start", round=round_num + 1)
+        plan_started = time.monotonic()
         raw_plan = await generate(plan_prompt, max_output_tokens=800, temperature=0.0, json_mode=True)
         plan = extract_json(raw_plan) or {}
         calls = (plan.get("calls") or [])[: min(MAX_CALLS_PER_ROUND, remaining)]
@@ -125,14 +159,27 @@ async def answer_question(
             # temperature fixes emptiness on its own (measured: it doesn't —
             # see build_plan_prompt's comment).
             log.warning("agent.empty_first_round_plan_retrying", question=question)
+            tracer.emit("plan.retry", round=round_num + 1, reason="empty plan on the first round")
             raw_plan = await generate(plan_prompt, max_output_tokens=800, temperature=0.4, json_mode=True)
             plan = extract_json(raw_plan) or {}
             calls = (plan.get("calls") or [])[: min(MAX_CALLS_PER_ROUND, remaining)]
 
+        tracer.emit(
+            "plan.done",
+            round=round_num + 1,
+            ms=int((time.monotonic() - plan_started) * 1000),
+            calls=[{"tool": c.get("tool"), "args": c.get("args") or {}} for c in calls],
+        )
+
         if not calls:
             break
 
-        outcomes = await asyncio.gather(*[_run_one_call(c, repo_id) for c in calls])
+        outcomes = await asyncio.gather(
+            *[
+                _run_one_call(c, repo_id, tracer, f"r{round_num + 1}c{i + 1}", round_num + 1)
+                for i, c in enumerate(calls)
+            ]
+        )
         total_calls += len(outcomes)
 
         round_lines = [f"--- Round {round_num + 1} tool results ---"]
@@ -156,8 +203,10 @@ async def answer_question(
 
     dedup_evidence = _dedupe_evidence(all_evidence)
 
+    tracer.emit("evidence.gathered", count=len(dedup_evidence), raw_count=len(all_evidence))
+
     if not dedup_evidence:
-        return {
+        result = {
             "answer": _no_evidence_abstention(tool_trace),
             "claims": [],
             "confidence": "low",
@@ -165,10 +214,24 @@ async def answer_question(
             "escalation": None,
             "tool_trace": tool_trace,
         }
+        tracer.emit("turn.done", ms=tracer.elapsed_ms, result=result, reason="no evidence")
+        return result
 
     compose_prompt = build_compose_prompt(question, dedup_evidence)
+    tracer.emit("compose.start", evidence_count=len(dedup_evidence))
+    compose_started = time.monotonic()
     raw_composed = await generate(compose_prompt, max_output_tokens=1500, temperature=0.1, json_mode=True)
-    composed = extract_json(raw_composed) or {
+    parsed = extract_json(raw_composed)
+    tracer.emit(
+        "compose.done",
+        ms=int((time.monotonic() - compose_started) * 1000),
+        # A parse failure here is the already-documented DeepSeek JSON
+        # flakiness, and it's exactly the kind of thing the advanced panel
+        # exists to make visible instead of it silently becoming a
+        # low-confidence abstention.
+        parsed=parsed is not None,
+    )
+    composed = parsed or {
         "answer": "I wasn't able to compose a reliable answer from the evidence I found.",
         "claims": [],
         "abstained": True,
@@ -176,6 +239,16 @@ async def answer_question(
     }
 
     valid_ids = {e["id"] for e in dedup_evidence}
+    verify_started = time.monotonic()
     result = verify(composed, valid_ids)
     result["tool_trace"] = tool_trace
+    tracer.emit(
+        "verify.done",
+        ms=int((time.monotonic() - verify_started) * 1000),
+        claims_in=len(composed.get("claims") or []),
+        claims_kept=len(result.get("claims") or []),
+        confidence=result.get("confidence"),
+        abstained=result.get("abstained"),
+    )
+    tracer.emit("turn.done", ms=tracer.elapsed_ms, result=result)
     return result

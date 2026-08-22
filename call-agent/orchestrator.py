@@ -14,6 +14,7 @@ the agent as if they were questions for it.
 from __future__ import annotations
 
 import base64
+import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -88,17 +89,17 @@ class Orchestrator:
             screen_image_b64 = base64.b64encode(self.state.latest_screen_frame).decode()
 
         try:
-            response = await self._http.post(
-                f"{self.brain_api_url}/api/agent/ask",
-                json={"question": question, "screen_image_base64": screen_image_b64},
-            )
-            response.raise_for_status()
-            result = response.json()
+            result = await self._ask_brain(question, screen_image_b64)
         except Exception as exc:  # noqa: BLE001 - a brain-api hiccup must not take the call down
             log.error("orchestrator.brain_api_error", error=str(exc))
+            await self._publish({"type": "turn.error", "error": str(exc)})
             await self.adapter.speak(
                 "Sorry, I couldn't reach my knowledge base just now — could you ask again in a moment?"
             )
+            return
+
+        if result is None:
+            log.warning("orchestrator.no_turn_done_event", question=question)
             return
 
         answer = (result.get("answer") or "").strip()
@@ -106,3 +107,48 @@ class Orchestrator:
             await self.adapter.speak(answer)
         else:
             log.warning("orchestrator.empty_answer", question=question, result=result)
+
+    async def _ask_brain(self, question: str, screen_image_b64: str | None) -> dict | None:
+        """Stream one turn from the brain-api, forwarding every trace event
+        into the room as it arrives, and return the final answer.
+
+        Uses /api/agent/ask/stream rather than /api/agent/ask so the
+        browser's advanced panel can show which tool is running WHILE it
+        runs — a plain POST only reveals the tool trace once the whole
+        turn (often tens of seconds, per the documented DeepSeek latency
+        variance) is already over. The spoken answer is identical either
+        way; this only changes when the UI hears about the steps.
+        """
+        turn_id = f"{int(time.time() * 1000)}"
+        await self._publish({"type": "turn.requested", "turn_id": turn_id, "question": question, "source": "voice"})
+
+        final: dict | None = None
+        async with self._http.stream(
+            "POST",
+            f"{self.brain_api_url}/api/agent/ask/stream",
+            json={"question": question, "screen_image_base64": screen_image_b64},
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    event = json.loads(line[6:])
+                except json.JSONDecodeError:
+                    log.warning("orchestrator.bad_trace_event", line=line[:200])
+                    continue
+                event["turn_id"] = turn_id
+                event["source"] = "voice"
+                await self._publish(event)
+                if event.get("type") == "turn.done":
+                    final = event.get("result")
+        return final
+
+    async def _publish(self, event: dict) -> None:
+        # Best-effort: the panel is observability, never a precondition for
+        # answering. An adapter that can't publish (or a transport with no
+        # data channel at all) must not break the turn.
+        try:
+            await self.adapter.publish_event(event)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("orchestrator.publish_event_failed", error=str(exc))

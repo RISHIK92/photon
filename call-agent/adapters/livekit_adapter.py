@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import time
 
 import structlog
@@ -27,6 +28,10 @@ ANNOUNCEMENT = (
     "Hi, I'm Meridian's support agent. I'm listening and taking notes — "
     "let me know if you'd like me off."
 )
+
+# Topic the browser filters on (client/app/call/TraceBridge.tsx) so trace
+# events never get confused with chat or any other data traffic.
+TRACE_TOPIC = "photon.trace"
 
 _SCREEN_FRAME_INTERVAL_SPEAKING = 1.0  # ~1 fps while someone is speaking
 _SCREEN_FRAME_INTERVAL_IDLE = 1.0 / 0.3  # ~0.3 fps otherwise
@@ -141,3 +146,14 @@ class LiveKitAdapter:
 
     async def announce(self, text: str) -> None:
         await self.speak(text)
+
+    async def publish_event(self, event: dict) -> None:
+        """Broadcast one trace event to every participant over LiveKit's
+        data channel. Reliable, since a dropped tool.done would leave the
+        panel showing a tool as still running forever."""
+        try:
+            await self._ctx.room.local_participant.publish_data(
+                json.dumps(event), reliable=True, topic=TRACE_TOPIC
+            )
+        except Exception as exc:  # noqa: BLE001 - a UI event must never take the call down
+            log.warning("livekit_adapter.publish_event_failed", type=event.get("type"), error=str(exc))
