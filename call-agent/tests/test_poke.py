@@ -1,13 +1,14 @@
-"""Addressing: with several humans on a call, the agent must answer only
-what is aimed at it — and must attribute it to the right person."""
+"""Open mic: every finalized utterance is handled — no wake word or poke
+required (explicit product decision; see orchestrator.py's on_speech
+docstring). Poke still exists, but only for what it ALSO does: re-linking
+which participant AgentSession listens to (adapters/livekit_adapter.py's
+set_participant, exercised there, not here) and attaching a display name
+for transcript lines, which IS orchestrator state and is tested below."""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
-import time
 
-import pytest
-import orchestrator as orch
 from orchestrator import Orchestrator
 
 
@@ -29,41 +30,59 @@ def _orch():
     return o
 
 
-def test_unaddressed_speech_is_ignored():
+def _capture_handle_turn(o):
+    seen = []
+
+    async def fake(question):
+        seen.append(question)
+
+    o._handle_turn = fake
+    return seen
+
+
+def test_speech_is_handled_without_any_poke():
+    """No wake word, no poke — on_speech still reaches _handle_turn."""
     o = _orch()
-    assert o._is_addressed("user:alice", "so then I told them to check the logs") is False
+    seen = _capture_handle_turn(o)
+
+    asyncio.run(o.on_speech("why are Northwind's webhooks failing?", "user:alice", True))
+    assert seen == ["why are Northwind's webhooks failing?"]
 
 
-def test_poke_addresses_only_the_person_who_poked():
+def test_a_second_speaker_is_handled_too_with_no_poke():
+    """Multiple people talking, nobody poking — every one of them still
+    gets answered, since the agent only ever hears whoever LiveKit has
+    linked in (see set_participant); there's no separate in-orchestrator
+    gate on top of that anymore."""
     o = _orch()
-    asyncio.run(o.on_poke("user:alice", "Alice"))
-    assert o._is_addressed("user:alice", "why are Northwind's webhooks failing?") is True
-    # Bob talking during Alice's window is NOT for the agent.
-    assert o._is_addressed("user:bob", "hang on, I'll pull up the dashboard") is False
+    seen = _capture_handle_turn(o)
+
+    asyncio.run(o.on_speech("hang on, I'll pull up the dashboard", "user:bob", True))
+    assert seen == ["hang on, I'll pull up the dashboard"]
 
 
-def test_poke_window_expires():
+def test_a_wake_word_prefix_is_still_stripped_if_present():
+    """Saying the agent's name still works, out of habit — it's just not
+    required. The prefix is stripped rather than sent to the brain verbatim."""
     o = _orch()
-    asyncio.run(o.on_poke("user:alice", "Alice"))
-    o.state.addressed_at = time.time() - (orch.POKE_WINDOW_SECONDS + 1)
-    assert o._is_addressed("user:alice", "anyway, about lunch") is False
+    seen = _capture_handle_turn(o)
+
+    asyncio.run(o.on_speech("Photon, what does a 401 mean here?", "guest:client", True))
+    assert seen == ["what does a 401 mean here?"]
 
 
-def test_wake_word_works_for_anyone_without_a_poke():
-    o = _orch()
-    assert o._is_addressed("guest:client", "Photon, what does a 401 mean here?") is True
-    assert o._is_addressed("guest:client", "hey Photon can you check the docs") is True
-
-
-def test_guest_can_poke_too():
+def test_poke_records_a_display_name_for_the_transcript():
+    """The mic re-link itself happens in the adapter, before this callback
+    fires — on_poke's own job now is just remembering who's who."""
     o = _orch()
     asyncio.run(o.on_poke("guest:client-a", "Client A"))
-    assert o._is_addressed("guest:client-a", "what changed on Thursday?") is True
+    assert o.state.names["guest:client-a"] == "Client A"
 
 
-def test_poke_is_consumed_by_one_turn():
-    """A poke answers one question; it does not leave the mic hot."""
+def test_non_final_or_empty_speech_is_still_ignored():
     o = _orch()
-    asyncio.run(o.on_poke("user:alice", "Alice"))
-    asyncio.run(o.on_speech("what is the retry policy?", "user:alice", True))
-    assert o.state.addressed_by is None
+    seen = _capture_handle_turn(o)
+
+    asyncio.run(o.on_speech("still talking", "user:alice", False))
+    asyncio.run(o.on_speech("   ", "user:alice", True))
+    assert seen == []

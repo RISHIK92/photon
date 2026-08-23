@@ -90,10 +90,11 @@ def test_screen_questions_reach_the_pipeline(text):
     assert classify(text) is Turn.ANSWER
 
 
-@pytest.mark.parametrize("text", SCREEN_UTTERANCES)
-def test_screen_questions_are_recognised_as_visual(text):
-    from orchestrator import VISUAL_HINT_RE
-    assert VISUAL_HINT_RE.search(text), f"visual intent not detected: {text!r}"
+# The old VISUAL_HINT_RE keyword gate is gone (see _wants_visual_context):
+# an active share is the signal now, so what matters here is only that a
+# screen question is never swallowed as small talk before it can reach the
+# frame-attach path. That makes classify() the LAST gate in front of vision,
+# which is why these cases live on.
 
 
 # ── Indic greetings get the same instant path as English ─────────────────

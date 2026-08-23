@@ -84,3 +84,52 @@ GREETINGS = {
 
 def greeting_for(code: str) -> str:
     return GREETINGS.get(code, GREETINGS["en-IN"])
+
+
+# Spoken the instant we decide to attach a screen frame — BEFORE the vision
+# call starts — so the caller hears something while a visual turn does its
+# extra work (~1.3s of vision on top of a normal turn).
+#
+# Pre-written per language for the same reason GREETINGS are: there is no
+# LLM in this path, and there must not be — an acknowledgement that waited
+# on a model would defeat its own purpose.
+#
+# Deliberately SHORT. This plays before the answer, so every word here is
+# added to the answer's own delay. A long, friendly line would make the turn
+# genuinely slower while trying to make it feel faster.
+#
+# These make no factual claim whatsoever, so the "no uncited claim" rule is
+# untouched — there is nothing in them to cite, exactly as with GREETINGS.
+ACKNOWLEDGEMENTS = {
+    "en-IN": [
+        "Okay, let me look.",
+        "Sure, checking your screen.",
+        "Got it, one moment.",
+    ],
+    "hi-IN": [
+        "ठीक है, देखता हूँ।",
+        "हाँ, आपकी स्क्रीन देख रहा हूँ।",
+        "समझ गया, एक पल।",
+    ],
+    "te-IN": [
+        "సరే, చూస్తాను.",
+        "అలాగే, మీ స్క్రీన్ చూస్తున్నాను.",
+        "అర్థమైంది, ఒక్క నిమిషం.",
+    ],
+    "ta-IN": [
+        "சரி, பார்க்கிறேன்.",
+        "ஆம், உங்கள் திரையைப் பார்க்கிறேன்.",
+        "புரிந்தது, ஒரு நிமிடம்.",
+    ],
+}
+
+
+def acknowledgement_for(code: str, index: int = 0) -> str:
+    """Rotate through the variants so repeated visual turns do not sound canned.
+
+    The index is the caller's turn counter, not randomness: a fixed cycle is
+    reproducible in tests, and back-to-back turns are guaranteed to differ,
+    which random choice would not be.
+    """
+    variants = ACKNOWLEDGEMENTS.get(code) or ACKNOWLEDGEMENTS["en-IN"]
+    return variants[index % len(variants)]

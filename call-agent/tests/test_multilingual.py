@@ -55,14 +55,12 @@ def test_greeting_is_spoken_in_the_callers_language(utterance, expected):
         assert text
 
 
-def test_unaddressed_speech_is_dropped_before_anything_runs():
-    """Nobody poked, so this never reaches classification or the pipeline.
-
-    This assertion changed when poke-to-address landed: ambient speech used
-    to reach the small-talk classifier (and emit a 0ms trace). Now it is
-    dropped one step earlier, which is the point — a six-person call must
-    not pay a classification, a trace event or an API call for every side
-    remark.
+def test_ambient_filler_reaches_the_classifier_but_stays_silent():
+    """Open mic (no wake word, no poke needed — product decision): every
+    finalized utterance reaches small_talk.classify(). Filler like this
+    classifies IGNORE, so the agent still says nothing and burns no LLM
+    call — but the trace panel shows a deliberate 0ms fast path (below)
+    rather than the turn looking dropped or missed.
     """
     a = RecordingAdapter()
     o = Orchestrator(a, "http://localhost:8000")
@@ -73,12 +71,15 @@ def test_unaddressed_speech_is_dropped_before_anything_runs():
     _run(go())
 
     assert a.spoken == []
-    assert a.events == []
+    assert [e["type"] for e in a.events] == ["turn.requested", "turn.fastpath", "turn.done"]
 
 
 def test_addressed_small_talk_still_takes_the_silent_fast_path():
-    """Poked, but the utterance turns out to be chatter: the agent stays
-    quiet and the trace shows a deliberate 0ms path rather than nothing."""
+    """Poked (still valid — poke re-links the mic in a multi-party call),
+    and the utterance turns out to be chatter: the agent stays quiet and
+    the trace shows a deliberate 0ms path rather than nothing. Same
+    outcome as the unpoked case above, since poke no longer gates whether
+    a turn is answered."""
     a = RecordingAdapter()
     o = Orchestrator(a, "http://localhost:8000")
 

@@ -26,7 +26,12 @@ import httpx
 import structlog
 
 from adapters.base import TransportAdapter
-from language import DEFAULT_LANGUAGE, detect_language, greeting_for
+from language import (
+    DEFAULT_LANGUAGE,
+    acknowledgement_for,
+    detect_language,
+    greeting_for,
+)
 from small_talk import Turn, classify
 from speech import for_speech
 
@@ -53,20 +58,6 @@ def wake_word_re(agent_name: str) -> re.Pattern:
 
 DEFAULT_AGENT_NAME = "Photon"
 
-VISUAL_HINT_RE = re.compile(
-    r"\b(where do i|i can'?t find|this screen|(on|check|look at|share|see) (my |the )?screen"
-    r"|what'?s on (my |the )?screen|help me (find|open|see|locate)"
-    # Deictic phrasing — extremely common on a screen-share call and
-    # previously all missed, because none of them contain the word
-    # "screen" at all. Safe to add: a frame is only ever attached when one
-    # is genuinely fresh, i.e. the customer is sharing RIGHT NOW.
-    r"|what am i looking at|does (this|that) look (right|correct|ok)"
-    r"|am i (in|on) the right (place|page|screen)|what does (this|that) (say|mean)"
-    r"|is (this|that) (right|correct)|where do i click)\b",
-    re.IGNORECASE,
-)
-
-
 # A screen frame is only meaningful while the customer is actually
 # sharing. Frames arrive at ~0.3-1fps during a share, so anything older
 # than this means the share stopped (or dropped) and the buffered frame no
@@ -82,25 +73,20 @@ SCREEN_FRAME_TTL_SECONDS = 30.0
 # use romanises Indic speech, which defeats script detection.
 REPLY_LANGUAGE = os.environ.get("AGENT_REPLY_LANGUAGE", "auto").strip()
 
-# How long a poke keeps the agent listening to that person. Long enough to
-# gather a thought, short enough that a forgotten poke doesn't leave the
-# agent answering a private aside ten minutes later.
-POKE_WINDOW_SECONDS = float(os.environ.get("AGENT_POKE_WINDOW_SECONDS", "45"))
-
-
 @dataclass
 class TurnState:
     transcript: list[dict] = field(default_factory=list)
     latest_screen_frame: bytes | None = None
     latest_screen_frame_at: float = 0.0
-    # Who last addressed the agent, and when. With several humans plus
-    # external guests on a call, "answer everything you hear" is wrong:
-    # it talks over side conversations and, worse, would attribute
-    # someone else's words to whoever happens to be linked.
-    addressed_by: str | None = None
-    addressed_name: str | None = None
-    addressed_at: float = 0.0
+    # Filled in by on_poke (a poke packet carries the sender's display
+    # name), so a transcript line can say "Priya" instead of a raw LiveKit
+    # identity. Not used for gating anymore — open mic answers whoever is
+    # linked regardless of whether they've ever poked.
     names: dict = field(default_factory=dict)
+    # Counts visual turns only, so the spoken acknowledgement rotates
+    # through its variants rather than repeating one line every time
+    # somebody asks about their screen.
+    visual_turns: int = 0
 
 
 class Orchestrator:
@@ -130,23 +116,21 @@ class Orchestrator:
     # ── SessionCallbacks ──────────────────────────────────────────────────
 
     async def on_poke(self, speaker_id: str, display_name: str) -> None:
-        self.state.addressed_by = speaker_id
-        self.state.addressed_name = display_name
-        self.state.addressed_at = time.time()
+        # The actual mic re-link already happened in the adapter
+        # (set_participant, before this callback fires) — this just
+        # records the display name for transcript lines.
         self.state.names[speaker_id] = display_name
         log.info("orchestrator.poked", speaker_id=speaker_id, name=display_name)
 
-    def _is_addressed(self, speaker_id: str, text: str) -> bool:
-        """Two ways to address the agent, per the product decision to
-        support both a button and saying its name."""
-        if self._wake_word.match(text.strip()):
-            return True
-        if self.state.addressed_by is None:
-            return False
-        within_window = (time.time() - self.state.addressed_at) <= POKE_WINDOW_SECONDS
-        return within_window and speaker_id == self.state.addressed_by
-
     async def on_speech(self, text: str, speaker_id: str, is_final: bool) -> None:
+        """Open mic: every finalized utterance from the currently linked
+        participant is answered — no wake word or poke required, per
+        explicit product request. Poke (`on_poke` above) and the wake word
+        still matter for what they ALSO do: `on_poke` re-links which
+        participant `AgentSession` listens to on a multi-party call (see
+        livekit_adapter.py's `set_participant`) — a separate question from
+        whether to answer, which is now always yes for whoever is linked.
+        """
         if not is_final or not text.strip():
             return
 
@@ -154,17 +138,7 @@ class Orchestrator:
         self.state.transcript.append({"speaker_id": speaker_id, "text": text, "ts": time.time()})
         log.info("orchestrator.speech_finalized", speaker_id=speaker_id, text=text)
 
-        # Everything said is transcribed; only what is addressed to the
-        # agent gets answered.
         await self._record_transcript("human", speaker_name, text, speaker_id)
-
-        if not self._is_addressed(speaker_id, text):
-            log.info("orchestrator.not_addressed", speaker_id=speaker_id)
-            return
-
-        # The window is consumed by the turn it triggered, so one poke
-        # answers one question rather than leaving the mic hot.
-        self.state.addressed_by = None
 
         await self._handle_turn(self._wake_word.sub("", text.strip(), count=1).strip() or text)
 
@@ -197,8 +171,35 @@ class Orchestrator:
     # ── internals ─────────────────────────────────────────────────────────
 
     def _wants_visual_context(self, question: str) -> bool:
-        if not VISUAL_HINT_RE.search(question):
-            return False
+        """An ACTIVE screen share is the signal — not the wording of the question.
+
+        This used to also require VISUAL_HINT_RE to match, and that keyword
+        gate silently ate every real screen-share turn we have logged:
+
+          - "See, I have shared the screen right here" missed, because the
+            pattern wants `share` followed by a space and the caller said
+            "shared";
+          - every Indic-language turn missed unconditionally, because the
+            pattern is ASCII-only — so the vision path and the multilingual
+            path were mutually exclusive, which nobody intended.
+
+        Both are the same class of bug: a keyword list is a PROXY for "is
+        this about the screen", and a proxy that fails does so silently and
+        looks exactly like the agent having no data. Meanwhile "is the
+        customer sharing their screen RIGHT NOW" is a stronger signal, is
+        free, and is language-independent.
+
+        Small talk never reaches here (_handle_turn returns early on any
+        non-ANSWER intent), so this only ever fires on a real question. The
+        cost of attaching a frame that turns out to be irrelevant is one
+        vision call (~1.3s); the cost of missing one is the agent saying "I
+        don't have information" while looking straight at the answer. Same
+        asymmetry small_talk.py is built around.
+
+        The TTL below is what keeps this honest: a frame is only attached
+        while a share is genuinely live, so a stale frame can never be
+        described as the current screen.
+        """
         if self.state.latest_screen_frame is None:
             return False
         age = time.time() - self.state.latest_screen_frame_at
@@ -206,7 +207,34 @@ class Orchestrator:
             log.info("orchestrator.screen_frame_stale", age_seconds=round(age, 1))
             self.state.latest_screen_frame = None
             return False
+        log.info("orchestrator.screen_frame_attached", age_seconds=round(age, 1))
         return True
+
+    async def _acknowledge(self, language: str) -> None:
+        """Say "okay, let me look" before a visual turn does its extra work.
+
+        A visual turn costs roughly 1.3s of vision on top of a normal one,
+        and that time is silent — which reads as the agent having missed the
+        question, so people repeat themselves and talk over the answer.
+
+        Fired only on the vision path, because that is the only path with
+        the extra second to cover. It is queued, not spoken over the answer:
+        the adapter's say() calls play in order, so this lands first and the
+        real answer follows it.
+
+        Best-effort by design — a filler is a nicety, and losing it must
+        never cost the caller their actual answer.
+        """
+        text = acknowledgement_for(language, self.state.visual_turns)
+        self.state.visual_turns += 1
+        try:
+            await self.adapter.speak(text, language=language)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("orchestrator.ack_failed", error=str(exc))
+            return
+        # Deliberately NOT written to the transcript: the transcript is the
+        # record of what was asked and answered, and "one moment" is neither.
+        log.info("orchestrator.ack_spoken", language=language, text=text)
 
     def _language_for(self, question: str) -> str:
         if REPLY_LANGUAGE != "auto":
@@ -228,6 +256,7 @@ class Orchestrator:
             # set as a citable "screen" item — this orchestrator just hands
             # over the raw frame, it never fabricates a description itself.
             screen_image_b64 = base64.b64encode(self.state.latest_screen_frame).decode()
+            await self._acknowledge(language)
 
         try:
             result = await self._ask_brain(question, screen_image_b64, language)
