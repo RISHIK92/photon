@@ -530,87 +530,11 @@ function Dashboard() {
           />
         )}
 
-        {/* what the agent can currently answer from — the actual state of
-            this workspace, stated before anything asks to be configured */}
-        <section className="pt-14">
-          <div className="flex items-center gap-4">
-            <span className="h-px w-10" style={{ background: "var(--l-rust)" }} />
-            <span className="text-[11px] tracking-[0.28em] uppercase l-t-muted">
-              This workspace
-            </span>
-            <span className="h-px flex-1" style={{ background: "var(--l-rule)" }} />
-          </div>
-
-          <div className="mt-8 grid gap-10 md:grid-cols-[1.15fr_1fr]">
-            <div>
-              <h1
-                className="text-[clamp(28px,3.4vw,42px)] leading-[1.12]"
-                style={{ color: "var(--l-ink)" }}
-              >
-                {firstRun ? (
-                  <>
-                    Nothing connected yet — so it{" "}
-                    <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
-                      knows nothing
-                    </span>
-                    .
-                  </>
-                ) : ready.length === 0 ? (
-                  <>
-                    Reading now. It will answer{" "}
-                    <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
-                      from this
-                    </span>{" "}
-                    shortly.
-                  </>
-                ) : (
-                  <>
-                    Ready for calls, from{" "}
-                    <span style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
-                      {ready.length} {ready.length === 1 ? "repository" : "repositories"}
-                    </span>
-                    .
-                  </>
-                )}
-              </h1>
-              <p className="mt-5 max-w-md text-[15px] leading-relaxed l-t-2">
-                {firstRun
-                  ? "Connect a source and pick what it may read. Nothing is indexed until you choose it, and it abstains rather than guessing about anything it has not read."
-                  : indexing.length > 0
-                    ? `${indexing.length} ${indexing.length === 1 ? "repository is" : "repositories are"} being cloned, parsed and indexed. This page updates itself; you can leave it.`
-                    : "Ask it anything grounded in what is connected below. Every answer names its source, and it says so out loud when the evidence runs out."}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-6 self-start">
-              {[
-                [String(ghInstallCount), ghInstallCount === 1 ? "source" : "sources"],
-                [String(ready.length), "ready"],
-                [String(indexing.length), "indexing"],
-              ].map(([n, l], i) => (
-                <div
-                  key={l}
-                  className="border-t pt-4"
-                  style={{ borderColor: i === 1 ? "var(--l-rust)" : "var(--l-rule)" }}
-                >
-                  <div
-                    className="leading-none"
-                    style={{ fontFamily: "var(--font-display)", fontSize: 40, color: "var(--l-ink)" }}
-                  >
-                    {n}
-                  </div>
-                  <div className="mt-3 text-[10px] tracking-[0.2em] uppercase l-t-muted">{l}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {error && (
-            <p className="l-note mt-8 pl-4 text-[13px] l-t-2" style={{ borderLeft: "1px solid var(--l-rust)" }}>
-              {error}
-            </p>
-          )}
-        </section>
+        {error && (
+          <p className="l-note mt-8 pl-4 text-[13px] l-t-2" style={{ borderLeft: "1px solid var(--l-rust)" }}>
+            {error}
+          </p>
+        )}
 
         {/* first run: say what the three steps are, rather than showing a
             grid of cards and hoping the order is obvious */}
@@ -648,6 +572,7 @@ function Dashboard() {
           }}
           onConnectSource={(key) => setConnectSource(key)}
           canConnect={canConnectSources}
+          canUseMock={canEditRepos}
         />
 
         {ghError && (
