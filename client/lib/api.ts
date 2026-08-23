@@ -346,8 +346,19 @@ export const uploadCustomDoc = (form: FormData) =>
     body: form,
   });
 
-export const listCustomDocs = () =>
-  api<{ id: string; title: string; chunk_count: number }[]>("/api/custom-docs");
+export type CustomDoc = {
+  id: string;
+  title: string;
+  filename: string | null;
+  size_bytes: number;
+  chunk_count: number;
+  created_at: string;
+};
+
+export const listCustomDocs = () => api<CustomDoc[]>("/api/custom-docs");
+
+export const deleteCustomDoc = (docId: string) =>
+  api<void>(`/api/custom-docs/${docId}`, { method: "DELETE" });
 
 
 // ── Waiting room ─────────────────────────────────────────────────────────

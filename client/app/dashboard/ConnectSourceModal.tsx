@@ -4,11 +4,14 @@ import { useEffect, useState } from "react";
 import {
   connectConnector,
   connectJira,
+  deleteCustomDoc,
   getConnectorProviders,
   listConnectorResources,
+  listCustomDocs,
   selectConnectorResources,
   startSlackInstall,
   uploadCustomDoc,
+  type CustomDoc,
   type ProviderField,
 } from "@/lib/api";
 
@@ -53,12 +56,44 @@ export default function ConnectSourceModal({
   const generic = ["linear", "notion", "datadog"].includes(sourceKey);
   const pickingResources = generic && connectionId !== null;
 
+  // Already-added documents — the upload form used to be the only way to
+  // see this source at all, with no way to tell what was already indexed
+  // or to remove any one of them.
+  const [docs, setDocs] = useState<CustomDoc[] | null>(null);
+  const [docsError, setDocsError] = useState<string | null>(null);
+  const [removingDoc, setRemovingDoc] = useState<string | null>(null);
+
+  const refreshDocs = () => {
+    listCustomDocs()
+      .then(setDocs)
+      .catch((e) => setDocsError(e instanceof Error ? e.message : String(e)));
+  };
+
   useEffect(() => {
     if (!generic) return;
     getConnectorProviders()
       .then((all) => setFields(all[sourceKey]?.fields ?? []))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [generic, sourceKey]);
+
+  useEffect(() => {
+    if (sourceKey !== "custom_docs") return;
+    refreshDocs();
+  }, [sourceKey]);
+
+  const removeDoc = async (docId: string) => {
+    setRemovingDoc(docId);
+    setDocsError(null);
+    try {
+      await deleteCustomDoc(docId);
+      setDocs((prev) => (prev ?? []).filter((d) => d.id !== docId));
+      onConnected();
+    } catch (e) {
+      setDocsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemovingDoc(null);
+    }
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -92,6 +127,8 @@ export default function ConnectSourceModal({
         form.append("text", values.text ?? "");
         const doc = await uploadCustomDoc(form);
         setDone(`Indexed “${doc.title}” into ${doc.chunk_count} chunks.`);
+        setValues({});
+        refreshDocs();
         onConnected();
         return;
       }
@@ -154,6 +191,40 @@ export default function ConnectSourceModal({
 
         {sourceKey === "custom_docs" && (
           <>
+            {docs === null ? (
+              <p className="text-[13px] l-t-muted mb-3">Loading added documents…</p>
+            ) : docs.length > 0 ? (
+              <div className="mb-4">
+                <p className="text-[12px] tracking-[0.12em] uppercase l-t-muted mb-2">
+                  Added ({docs.length})
+                </p>
+                <div className="max-h-48 overflow-y-auto flex flex-col gap-1">
+                  {docs.map((d) => (
+                    <div
+                      key={d.id}
+                      className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-[13px]"
+                      style={{ background: "rgba(28,25,23,.03)" }}
+                    >
+                      <span className="truncate">
+                        {d.title}
+                        <span className="ml-2 text-[11px] l-t-muted">{d.chunk_count} chunks</span>
+                      </span>
+                      <button
+                        onClick={() => removeDoc(d.id)}
+                        disabled={removingDoc === d.id}
+                        className="shrink-0 text-[11px] uppercase tracking-[0.1em] l-t-rust disabled:opacity-50"
+                      >
+                        {removingDoc === d.id ? "Removing…" : "Remove"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-[13px] l-t-muted mb-3">No documents added yet.</p>
+            )}
+            {docsError && <p className="text-[13px] l-t-rust mb-3">{docsError}</p>}
+
             <p className="text-[13px] l-t-2 mb-3">
               Paste a business flow, runbook or escalation policy. Markdown headings become
               sections, so the agent can cite the right part rather than the whole document.
