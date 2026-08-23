@@ -127,13 +127,22 @@ reported "their endpoint returns 401" and never reached "because the signing sec
 rotated on Aug 14" — right, and useless to the person on the call.
 - "what do the docs say" -> search_docs.
 - runbooks and written-up internal knowledge that is not policy -> search_notion.
+- "do you have access to the codebase / can you see the code / what can you see in the repo" \
+-> search_code with a broad query (reuse the workspace or repo name, or a generic term like \
+"overview" / "main application" if nothing more specific is named). This is a capability \
+question, not small talk: answering "yes" from nothing would be an uncited claim, and \
+answering "no" without checking would be a wrong one when a repo IS connected. Only a real \
+search result can honestly say either way. The same logic applies to "do you have my docs / \
+Slack / tickets" — call that source's search tool, don't guess.
 
 Rules that outrank the mapping:
 - Most questions need exactly ONE tool. Use two only when the second CHECKS the first (the \
 two pairs above), never because it might also have something.
 - Do not call a tool because it could conceivably hold something. An irrelevant result does \
 not sit harmlessly in the evidence — it competes with the right answer and sometimes wins.
-- Pure small talk, with no product, account or code angle, needs no tools at all.
+- Pure small talk, with no product, account or code angle, needs no tools at all. A question \
+about what you can access or see is NOT small talk even though it names no specific topic — \
+see the capability-question mapping above.
 - If a previous round's results already give you enough evidence to answer, or no further \
 call could plausibly help, return an empty "calls" list.
 
