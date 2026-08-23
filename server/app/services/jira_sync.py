@@ -136,7 +136,6 @@ def sync_project(
     site_url: str, email: str, token: str, workspace_id: str, project_key: str,
     updated_since: Optional[str] = None,
 ) -> int:
-    ensure_collection()
     headers = auth_header(email, token)
     jql = f'project = "{project_key}"'
     if updated_since:
@@ -145,7 +144,7 @@ def sync_project(
         jql += f' AND updated >= "{updated_since}"'
     jql += " ORDER BY updated DESC"
 
-    texts, payloads = [], []
+    issues_payload = []
     with httpx.Client(timeout=40.0) as client:
         for issue in _issues(client, site_url, headers, jql):
             fields = issue.get("fields") or {}
@@ -160,10 +159,7 @@ def sync_project(
             body = f"{issue['key']} [{status}] {summary}\n{description}\n{comments}".strip()
             if not body:
                 continue
-            texts.append(body[:4000])
-            payloads.append({
-                "workspace_id": workspace_id,
-                "project_key": project_key,
+            issues_payload.append({
                 "issue_key": issue["key"],
                 "summary": summary,
                 "status": status,
@@ -173,8 +169,23 @@ def sync_project(
                 "text": body[:4000],
             })
 
-    if not texts:
+    return index_issues(workspace_id, project_key, issues_payload)
+
+
+def index_issues(workspace_id: str, project_key: str, issues: list[dict]) -> int:
+    """Embed and upsert already-fetched issues. Shared by the live JQL sync
+    above and app/mock/loader.py's fabricated issues, so both produce
+    IDENTICAL points — same locator shape, same deterministic id, same
+    payload — and search() cannot tell them apart at query time. Each
+    dict needs: issue_key, summary, status, assignee, url, updated, text.
+    """
+    ensure_collection()
+    issues = [i for i in issues if (i.get("text") or "").strip()]
+    if not issues:
         return 0
+
+    texts = [i["text"][:4000] for i in issues]
+    payloads = [{"workspace_id": workspace_id, "project_key": project_key, **i, "text": i["text"][:4000]} for i in issues]
 
     client_q = get_qdrant()
     for start in range(0, len(texts), _EMBED_BATCH):

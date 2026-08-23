@@ -13,6 +13,11 @@ async_engine = create_async_engine(settings.database_url, echo=False, future=Tru
 # Sync engine for Alembic / Celery tasks
 sync_engine = create_engine(settings.sync_database_url, echo=False)
 
+
+def get_sync_engine():
+    """Accessor for the sync engine, used by the Celery task modules."""
+    return sync_engine
+
 AsyncSessionLocal = sessionmaker(
     bind=async_engine,
     class_=AsyncSession,
@@ -115,4 +120,9 @@ async def create_db_and_tables() -> None:
         ))
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_repos_github_installation_id ON repos (github_installation_id)"
+        ))
+        # The dashboard's "Mock" button (routers/mock.py) — fictional
+        # "Adventa" content, never a real connection.
+        await conn.execute(text(
+            "ALTER TABLE repos ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT false"
         ))

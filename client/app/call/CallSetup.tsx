@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
+  disableMock,
+  enableMock,
   getCallOptions,
   type CallOptions,
   type CallSource,
+  type MockProvider,
 } from "@/lib/api";
 import Toggle from "../_ui/Toggle";
 import AgentNameField from "./AgentNameField";
+
+const MOCK_PROVIDERS = new Set<string>(["github", "slack", "jira", "linear", "notion", "datadog"]);
 
 /** Chosen before joining: what the agent is for, which language, and which
  * sources it may use.
@@ -33,15 +38,47 @@ export default function CallSetup({
   const [language, setLanguage] = useState("english");
   const [sources, setSources] = useState<string[]>([]);
   const [showMore, setShowMore] = useState(false);
+  const [mockBusy, setMockBusy] = useState<string | null>(null);
+
+  const loadOptions = useCallback(async (firstLoad: boolean) => {
+    const o = await getCallOptions();
+    setOptions(o);
+    if (firstLoad) setSources(o.default_enabled);
+  }, []);
 
   useEffect(() => {
-    getCallOptions()
-      .then((o) => {
+    loadOptions(true).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [loadOptions]);
+
+  const tryMock = async (key: MockProvider) => {
+    setMockBusy(key);
+    try {
+      await enableMock(key);
+      // GitHub's mock repo ingests asynchronously (clone/parse/embed, same
+      // pipeline as any repo) — a few seconds, unlike the other providers
+      // which are indexed synchronously before the response returns. Poll
+      // briefly rather than leaving the row stuck on "Try mock".
+      for (let i = 0; i < 6; i++) {
+        const o = await getCallOptions();
         setOptions(o);
-        setSources(o.default_enabled);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+        if (key !== "github" || o.sources.find((s) => s.key === "github")?.available) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } finally {
+      setMockBusy(null);
+    }
+  };
+
+  const turnOffMock = async (key: MockProvider) => {
+    setMockBusy(key);
+    try {
+      await disableMock(key);
+      setSources((prev) => prev.filter((k) => k !== key));
+      await loadOptions(false);
+    } finally {
+      setMockBusy(null);
+    }
+  };
 
   if (error) return <p className="text-[color:var(--l-rust)] text-sm">{error}</p>;
   if (!options) return <p className="text-[color:var(--l-muted)] text-sm">Loading call options…</p>;
@@ -130,6 +167,10 @@ export default function CallSetup({
               enabled={sources.includes(s.key)}
               onToggle={() => setSources((prev) => toggle(prev, s.key))}
               onConnect={() => onConnectSource(s.key)}
+              canMock={MOCK_PROVIDERS.has(s.key)}
+              mockBusy={mockBusy === s.key}
+              onTryMock={() => tryMock(s.key as MockProvider)}
+              onTurnOffMock={() => turnOffMock(s.key as MockProvider)}
             />
           ))}
         </div>
@@ -150,6 +191,10 @@ export default function CallSetup({
                 enabled={sources.includes(s.key)}
                 onToggle={() => setSources((prev) => toggle(prev, s.key))}
                 onConnect={() => onConnectSource(s.key)}
+                canMock={MOCK_PROVIDERS.has(s.key)}
+                mockBusy={mockBusy === s.key}
+                onTryMock={() => tryMock(s.key as MockProvider)}
+                onTurnOffMock={() => turnOffMock(s.key as MockProvider)}
               />
             ))}
           </div>
@@ -196,11 +241,21 @@ function SourceRow({
   enabled,
   onToggle,
   onConnect,
+  canMock,
+  mockBusy,
+  onTryMock,
+  onTurnOffMock,
 }: {
   source: CallSource;
   enabled: boolean;
   onToggle: () => void;
   onConnect: () => void;
+  /** Whether this source has a mock provider at all (github/slack/jira/
+   * linear/notion/datadog) — custom_docs doesn't. */
+  canMock: boolean;
+  mockBusy: boolean;
+  onTryMock: () => void;
+  onTurnOffMock: () => void;
 }) {
   if (source.coming_soon) {
     return (
@@ -227,6 +282,11 @@ function SourceRow({
       />
       <span className="text-sm text-[color:var(--l-ink)] flex-1">
         {source.label}
+        {source.is_mock && (
+          <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[color:var(--l-terra)]">
+            mock
+          </span>
+        )}
         <span className="block text-[10px] text-[color:var(--l-muted)]">{source.detail}</span>
       </span>
       {!source.available && (
@@ -235,6 +295,25 @@ function SourceRow({
           className="text-xs border border-[rgba(180,83,9,.45)] text-[color:var(--l-rust)] hover:bg-[rgba(180,83,9,.07)] rounded px-2 py-1"
         >
           Connect
+        </button>
+      )}
+      {!source.available && canMock && (
+        <button
+          onClick={onTryMock}
+          disabled={mockBusy}
+          className="text-xs border border-[color:var(--l-rule)] text-[color:var(--l-ink-2)] hover:text-[color:var(--l-ink)] rounded px-2 py-1 disabled:opacity-50"
+          title="Adds fictional [MOCK] data so the agent has something to answer from — not a real connection"
+        >
+          {mockBusy ? "adding…" : "Try mock"}
+        </button>
+      )}
+      {source.available && source.is_mock && (
+        <button
+          onClick={onTurnOffMock}
+          disabled={mockBusy}
+          className="text-xs border border-[color:var(--l-rule)] text-[color:var(--l-ink-2)] hover:text-[color:var(--l-ink)] rounded px-2 py-1 disabled:opacity-50"
+        >
+          {mockBusy ? "removing…" : "Turn off"}
         </button>
       )}
     </div>

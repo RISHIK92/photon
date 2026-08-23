@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { GITHUB_STATE_LABEL, getGithubStatus, type GithubStatus } from "@/lib/api";
+import {
+  GITHUB_STATE_LABEL,
+  disableMock,
+  enableMock,
+  getGithubStatus,
+  getMockStatus,
+  type GithubStatus,
+  type MockProvider,
+} from "@/lib/api";
 import { INTEGRATIONS, SCOPE_LABEL, type Integration } from "@/lib/integrations";
+
+const MOCK_PROVIDERS = new Set<string>(["github", "slack", "jira", "linear", "notion", "datadog"]);
 
 /** What the agent can draw on, and what it will be able to.
  *
@@ -23,6 +33,7 @@ export default function SourcesGrid({
   onConnectGithub,
   onConnectSource,
   canConnect = true,
+  canUseMock = true,
 }: {
   githubConnected: number;
   onConnectGithub: () => void;
@@ -31,6 +42,9 @@ export default function SourcesGrid({
    * routers/connectors.py, github_app.py, jira.py, slack.py) — false disables
    * the tiles instead of letting a viewer/member click into a 403. */
   canConnect?: boolean;
+  /** Enabling mock data is MEMBER-level server-side (routers/mock.py),
+   * same as adding a repo — false disables the "try with mock data" links. */
+  canUseMock?: boolean;
 }) {
   // GitHub's label comes from the shared status rather than a local count,
   // so the card, the dialog and the call setup screen all say the same
@@ -39,6 +53,37 @@ export default function SourcesGrid({
   useEffect(() => {
     getGithubStatus().then(setGithub).catch(() => setGithub(null));
   }, [githubConnected]);
+
+  // Which providers already have fictional [MOCK] data for this workspace
+  // (server/app/routers/mock.py) — a workspace's own testing aid, never a
+  // real connection, so it's tracked and shown separately from `connected`.
+  const [mock, setMock] = useState<Record<string, boolean>>({});
+  const [mockBusy, setMockBusy] = useState<string | null>(null);
+  const refreshMock = () => getMockStatus().then(setMock).catch(() => {});
+  useEffect(() => {
+    refreshMock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [githubConnected]);
+
+  const tryMock = async (key: MockProvider) => {
+    setMockBusy(key);
+    try {
+      await enableMock(key);
+      await refreshMock();
+    } finally {
+      setMockBusy(null);
+    }
+  };
+
+  const turnOffMock = async (key: MockProvider) => {
+    setMockBusy(key);
+    try {
+      await disableMock(key);
+      await refreshMock();
+    } finally {
+      setMockBusy(null);
+    }
+  };
 
   const live = INTEGRATIONS.filter((i) => i.status === "live");
   const soon = INTEGRATIONS.filter((i) => i.status === "coming_soon");
@@ -69,30 +114,72 @@ export default function SourcesGrid({
       <div className="mt-6 grid gap-x-10 md:grid-cols-2 xl:grid-cols-3">
         {live.map((i) => {
           const connected = i.key === "github" && githubConnected > 0;
+          const mocked = MOCK_PROVIDERS.has(i.key) && mock[i.key];
           return (
-            <button
+            <div
               key={i.key}
-              onClick={connectable(i.key)}
-              disabled={!canConnect}
-              title={canConnect ? undefined : "Only an owner can connect a new source"}
-              className="l-row group relative block w-full border-t py-4 text-left disabled:cursor-not-allowed disabled:opacity-50"
+              className="l-row group relative border-t py-4"
               style={{ borderColor: "var(--l-rule)" }}
             >
               <span className="l-row-rule" style={{ background: "var(--l-rust)" }} />
-              <span className="flex items-baseline justify-between gap-3">
-                <span className="text-[15px]" style={{ color: "var(--l-ink)" }}>
-                  {i.name}
+              <button
+                onClick={connectable(i.key)}
+                disabled={!canConnect}
+                title={canConnect ? undefined : "Only an owner can connect a new source"}
+                className="block w-full text-left disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="flex items-baseline justify-between gap-3">
+                  <span className="text-[15px]" style={{ color: "var(--l-ink)" }}>
+                    {i.name}
+                  </span>
+                  <span
+                    className="flex shrink-0 items-center gap-1.5 text-[10px] tracking-[0.16em] whitespace-nowrap uppercase"
+                    style={{ color: connected ? "var(--l-rust)" : "var(--l-muted)" }}
+                  >
+                    {connected && <span className="l-dot" style={{ background: "var(--l-rust)" }} />}
+                    {connected ? `${githubConnected} connected` : "connect"}
+                  </span>
                 </span>
-                <span
-                  className="flex shrink-0 items-center gap-1.5 text-[10px] tracking-[0.16em] whitespace-nowrap uppercase"
-                  style={{ color: connected ? "var(--l-rust)" : "var(--l-muted)" }}
-                >
-                  {connected && <span className="l-dot" style={{ background: "var(--l-rust)" }} />}
-                  {connected ? `${githubConnected} connected` : "connect"}
-                </span>
-              </span>
-              <span className="mt-1.5 block text-[13px] leading-snug l-t-2">{i.unlocks}</span>
-            </button>
+                <span className="mt-1.5 block text-[13px] leading-snug l-t-2">{i.unlocks}</span>
+              </button>
+
+              {MOCK_PROVIDERS.has(i.key) && (
+                <div className="mt-2">
+                  {mocked ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span
+                        className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.14em] uppercase"
+                        style={{ color: "var(--l-terra)" }}
+                        title="Fictional [MOCK] data — not a real connection"
+                      >
+                        <span className="l-dot" style={{ background: "var(--l-terra)" }} />
+                        mock data active
+                      </span>
+                      <button
+                        onClick={() => turnOffMock(i.key as MockProvider)}
+                        disabled={mockBusy === i.key || !canUseMock}
+                        className="text-[10px] tracking-[0.14em] uppercase underline decoration-dotted l-t-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {mockBusy === i.key ? "removing…" : "turn off"}
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => tryMock(i.key as MockProvider)}
+                      disabled={mockBusy === i.key || !canUseMock}
+                      className="text-[10px] tracking-[0.14em] uppercase underline decoration-dotted l-t-muted disabled:cursor-not-allowed disabled:no-underline disabled:opacity-50"
+                      title={
+                        !canUseMock
+                          ? "Only a member or owner can add mock data"
+                          : "Adds fictional [MOCK] data so the agent has something to answer from — not a real connection"
+                      }
+                    >
+                      {mockBusy === i.key ? "adding mock data…" : "try with mock data"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>

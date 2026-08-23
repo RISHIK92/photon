@@ -37,6 +37,9 @@ export type Repo = {
   error_message: string | null;
   ingest_seconds: number | null;
   created_at: string;
+  /** Fictional "Adventa" content from the dashboard's Mock button, never a
+   * real connection — see server/app/routers/mock.py. */
+  is_mock?: boolean;
 };
 
 // localStorage throws in some privacy modes; never let that break a render.
@@ -266,6 +269,9 @@ export type CallSource = {
   default_enabled: boolean;
   coming_soon: boolean;
   tools: string[];
+  /** True when `available` comes from the dashboard's Mock button, not a
+   * real connection — see server/app/services/tool_availability.py. */
+  is_mock: boolean;
 };
 export type CallOptions = {
   bot_types: BotType[];
@@ -472,3 +478,20 @@ export const changeMemberRole = (userId: string, role: WorkspaceRole) =>
 
 export const removeMember = (userId: string) =>
   api<void>(`/api/workspaces/members/${userId}`, { method: "DELETE" });
+
+// ── Mock sources ────────────────────────────────────────────────────────
+// One click per provider to give a real, empty workspace something to
+// answer from — fictional "Adventa" data, clearly labeled [MOCK]
+// everywhere it surfaces, never mistaken for a real connection. See
+// server/app/routers/mock.py.
+
+export type MockProvider = "github" | "slack" | "jira" | "linear" | "notion" | "datadog";
+
+export const getMockStatus = () =>
+  api<Record<MockProvider, boolean>>("/api/mock");
+
+export const enableMock = (provider: MockProvider) =>
+  api<{ provider: string; already_enabled: boolean }>(`/api/mock/${provider}`, { method: "POST" });
+
+export const disableMock = (provider: MockProvider) =>
+  api<{ provider: string; removed: boolean }>(`/api/mock/${provider}`, { method: "DELETE" });

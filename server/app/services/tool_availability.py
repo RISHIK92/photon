@@ -11,6 +11,7 @@ answer, not a missing one. Fewer, real tools produce better plans.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from sqlmodel import select
@@ -39,6 +40,10 @@ class SourceGroup:
     available: bool = False
     detail: str = ""
     coming_soon: bool = False
+    # True when `available` comes from the dashboard's Mock button
+    # (routers/mock.py) rather than a real connection — the pre-call
+    # screen uses this to offer "turn off" instead of "Connect".
+    is_mock: bool = False
 
 
 # The demo corpus (the fictional "Meridian" company) is a REHEARSAL fixture.
@@ -65,6 +70,13 @@ def _groups() -> list[SourceGroup]:
     ]
 
 
+async def _false() -> bool:
+    # A connection row already exists, so the has_data() check for it is
+    # skipped entirely — this fills the same slot in the gather() below
+    # without a wasted Qdrant round-trip.
+    return False
+
+
 async def source_groups(session: AsyncSession, workspace_id: str) -> list[SourceGroup]:
     groups = {g.key: g for g in _groups()}
 
@@ -72,6 +84,7 @@ async def source_groups(session: AsyncSession, workspace_id: str) -> list[Source
         select(Repo).where(Repo.workspace_id == workspace_id, Repo.status == RepoStatus.READY)
     )).scalars().all()
     groups["github"].available = bool(ready_repos)
+    groups["github"].is_mock = bool(ready_repos) and all(r.is_mock for r in ready_repos)
     groups["github"].detail = (
         f"{len(ready_repos)} repo{'s' if len(ready_repos) != 1 else ''} indexed"
         if ready_repos else "no repositories indexed yet"
@@ -88,27 +101,58 @@ async def source_groups(session: AsyncSession, workspace_id: str) -> list[Source
     slack = (await session.execute(
         select(SlackInstallation).where(SlackInstallation.workspace_id == workspace_id)
     )).scalars().first()
-    groups["slack"].available = slack is not None
-    groups["slack"].detail = slack.team_name if slack else "not connected"
 
     jira = (await session.execute(
         select(JiraConnection).where(JiraConnection.workspace_id == workspace_id)
     )).scalars().first()
-    groups["jira"].available = jira is not None
-    groups["jira"].detail = jira.site_url if jira else "not connected"
 
     external = (await session.execute(
         select(ExternalConnection).where(ExternalConnection.workspace_id == workspace_id)
     )).scalars().all()
     by_provider = {c.provider: c for c in external}
-    for provider, key in (
-        (ConnectorProvider.NOTION, "notion"),
-        (ConnectorProvider.LINEAR, "linear"),
-        (ConnectorProvider.DATADOG, "datadog"),
+
+    # A real connection ROW is the normal signal, but the dashboard's "Mock"
+    # button (routers/mock.py) indexes fictional data straight into these
+    # same collections with no connection row at all — so a call started
+    # right after clicking it would otherwise see the source as
+    # unavailable and never offer search_slack/search_jira/etc. to the
+    # planner. has_data() is the same cheap workspace-scoped point check
+    # the search_* tools already run at call time; asked here too so a
+    # meeting's allowed_tools isn't quietly narrower than what the agent
+    # can actually answer from.
+    from app.services import jira_sync, slack_sync
+    from app.services.connectors import base as connector_base
+
+    def _run(fn, *args):
+        return asyncio.get_event_loop().run_in_executor(None, fn, *args)
+
+    mock_slack, mock_jira, mock_notion, mock_linear, mock_datadog = await asyncio.gather(
+        _run(slack_sync.has_data, workspace_id) if slack is None else _false(),
+        _run(jira_sync.has_data, workspace_id) if jira is None else _false(),
+        _run(connector_base.has_data, workspace_id, "notion") if ConnectorProvider.NOTION not in by_provider else _false(),
+        _run(connector_base.has_data, workspace_id, "linear") if ConnectorProvider.LINEAR not in by_provider else _false(),
+        _run(connector_base.has_data, workspace_id, "datadog") if ConnectorProvider.DATADOG not in by_provider else _false(),
+    )
+
+    groups["slack"].available = slack is not None or mock_slack
+    groups["slack"].is_mock = slack is None and mock_slack
+    groups["slack"].detail = slack.team_name if slack else ("mock data (testing)" if mock_slack else "not connected")
+
+    groups["jira"].available = jira is not None or mock_jira
+    groups["jira"].is_mock = jira is None and mock_jira
+    groups["jira"].detail = jira.site_url if jira else ("mock data (testing)" if mock_jira else "not connected")
+
+    for provider, key, mocked in (
+        (ConnectorProvider.NOTION, "notion", mock_notion),
+        (ConnectorProvider.LINEAR, "linear", mock_linear),
+        (ConnectorProvider.DATADOG, "datadog", mock_datadog),
     ):
         conn = by_provider.get(provider)
-        groups[key].available = conn is not None
-        groups[key].detail = (conn.display_name or "connected") if conn else "not connected"
+        groups[key].available = conn is not None or mocked
+        groups[key].is_mock = conn is None and mocked
+        groups[key].detail = (
+            (conn.display_name or "connected") if conn else ("mock data (testing)" if mocked else "not connected")
+        )
 
     # Only present on a deployment that opted in; otherwise the group is
     # dropped entirely so it cannot be toggled on by accident.

@@ -295,7 +295,7 @@ async def call_options(
             {
                 "key": g.key, "label": g.label, "available": g.available,
                 "detail": g.detail, "default_enabled": g.default_enabled,
-                "coming_soon": g.coming_soon, "tools": g.tools,
+                "coming_soon": g.coming_soon, "tools": g.tools, "is_mock": g.is_mock,
             }
             for g in groups
         ],

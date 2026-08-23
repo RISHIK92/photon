@@ -568,6 +568,11 @@ class RepoBase(SQLModel):
     # repos is calibrated from THIS deployment's real measurements rather
     # than a number someone guessed once (see app/services/estimate.py).
     ingest_seconds: Optional[float] = None
+    # Fictional "Adventa" content from app/mock/, not a real connection —
+    # see routers/mock.py. Kept as its own flag rather than inferred from
+    # source_url so the dashboard/evidence panel can label it without
+    # string-matching a path.
+    is_mock: bool = False
 
 
 class Repo(RepoBase, table=True):
