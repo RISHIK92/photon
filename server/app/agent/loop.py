@@ -30,6 +30,39 @@ MAX_CALLS_PER_ROUND = 4
 
 _REPO_ID_TOOLS = {t["name"] for t in TOOL_SCHEMAS if "repo_id" in t["parameters"]}
 
+# Required arguments that are just natural language, and so can be filled
+# from the question itself when the planner leaves them out.
+#
+# Measured: on "why does X behave this way" questions the planner emitted
+# explain_why with args {} in 6 of 12 runs and search_code with args {} in
+# 4 of 12, so the provenance chain (code -> commit -> PR -> Slack) silently
+# never ran and the answer was composed from whatever else survived. A
+# tightened plan prompt moved those numbers but cost more than it bought —
+# warning the planner that a missing argument makes a tool fail made it
+# risk-averse, and the docs-vs-code question went from planning
+# check_conflict 3/3 times to planning nothing at all 3/3 times.
+#
+# So this is handled here instead, where it is deterministic rather than
+# subject to model variance — the same posture already taken with repo_id.
+# It is safe precisely because these arguments are free text: search_code's
+# query is a semantic search string, check_conflict's claim is the assertion
+# to check, and explain_why's symbol_or_path is self-located via search_code
+# when it isn't a path (see provenance._locate_file). The question is a
+# truthful value for each.
+#
+# Deliberately NOT extended to account_id, symbol or path. Those name a
+# specific record, symbol or file; a question is not one, and filling one in
+# would turn a clean "bad arguments" error into a confident lookup of the
+# wrong thing.
+_FREE_TEXT_ARGS = {"query", "claim", "symbol_or_path"}
+_QUESTION_BACKFILL_ARGS = {
+    t["name"]: tuple(
+        k for k, v in t["parameters"].items() if v.get("required") and k in _FREE_TEXT_ARGS
+    )
+    for t in TOOL_SCHEMAS
+    if any(v.get("required") and k in _FREE_TEXT_ARGS for k, v in t["parameters"].items())
+}
+
 # Tools that read tenant-owned data. workspace_id is FORCED by the loop and
 # deliberately absent from the schema the planner sees: it is not a choice
 # the model should be able to make, and a hallucinated workspace id would be
@@ -68,9 +101,14 @@ async def _run_one_call(
     workspace_id: str | None = None,
     known_repo_ids: set[str] | None = None,
     allowed_tools: set[str] | None = None,
+    question: str = "",
 ) -> dict:
     tool_name = call.get("tool")
     args = dict(call.get("args") or {})
+
+    for arg_name in _QUESTION_BACKFILL_ARGS.get(tool_name, ()):
+        if not args.get(arg_name):
+            args[arg_name] = question
     if tool_name in _REPO_ID_TOOLS:
         if repo_id:
             # Single-repo mode: always force the loop's own resolved
@@ -340,6 +378,7 @@ async def answer_question(
                     workspace_id=workspace_id,
                     known_repo_ids=known_repo_ids,
                     allowed_tools=allowed_tools,
+                    question=question,
                 )
                 for i, c in enumerate(calls)
             ]
