@@ -13,6 +13,17 @@
  */
 const BASE = process.env.NEXT_PUBLIC_BRAIN_API_URL || "http://localhost:8000";
 
+/** ngrok's free tier answers browser-shaped requests with an HTML
+ *  interstitial ("You are about to visit...") instead of the API response,
+ *  which turns every fetch into a JSON parse error rather than an obvious
+ *  failure. This header opts out of it. Harmless against any other host,
+ *  so it is set unconditionally rather than by sniffing the URL — a check
+ *  for "ngrok" in the hostname would silently stop working the day the
+ *  tunnel moves to a custom domain. */
+function applyTunnelHeader(headers: Headers) {
+  headers.set("ngrok-skip-browser-warning", "1");
+}
+
 const TOKEN_KEY = "photon.token";
 const WORKSPACE_KEY = "photon.workspace";
 
@@ -74,6 +85,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const workspace = getWorkspaceId();
   const headers = new Headers(init.headers);
+  applyTunnelHeader(headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (workspace) headers.set("X-Workspace-Id", workspace);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -107,7 +119,10 @@ export async function login(email: string, password: string) {
   const body = new URLSearchParams({ username: email, password });
   const res = await fetch(`${BASE}/api/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "ngrok-skip-browser-warning": "1",
+    },
     body,
   });
   if (!res.ok) {
@@ -123,7 +138,7 @@ export async function login(email: string, password: string) {
 export async function signup(email: string, password: string) {
   const res = await fetch(`${BASE}/api/auth/signup`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "1" },
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
@@ -506,3 +521,64 @@ export const enableMock = (provider: MockProvider) =>
 
 export const disableMock = (provider: MockProvider) =>
   api<{ provider: string; removed: boolean }>(`/api/mock/${provider}`, { method: "DELETE" });
+
+/** Fetch the REAL contents of a cited file range, for the code sidebar.
+ *
+ * The evidence a tool returns carries a `snippet`, but that snippet is the
+ * embedded CHUNK, and a chunk does not reliably match the line range its
+ * own locator claims — `authController.ts:L1-L39` comes back as five lines
+ * of imports, and some chunks are missing lines from the middle entirely.
+ * CodeSnippet numbers its lines from the locator's start, so rendering the
+ * chunk would print confident, wrong line numbers — the exact failure the
+ * panel exists to prevent.
+ *
+ * `read_file` reads the file off disk, so what it returns really is lines
+ * `start..end`. Unauthenticated like the rest of /api/tools (documented
+ * demo-scope decision).
+ */
+const readFileOnce = (repoId: string, path: string, start?: number, end?: number) =>
+  fetch(`${BASE}/api/tools/read_file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "1" },
+    body: JSON.stringify({ args: { repo_id: repoId, path, start, end } }),
+  })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`read_file ${r.status}`))))
+    .then((d) => (d?.evidence?.[0]?.snippet as string | undefined) ?? null);
+
+/** Every evidence snippet is capped at 800 characters by make_evidence(),
+ *  which is right for something being fed to the compose LLM and wrong for
+ *  a sidebar: a 64-line citation arrives as its first ~35 lines with no
+ *  indication the rest was cut.
+ *
+ *  Rather than raise that cap — it is shared with everything the agent
+ *  reasons over, and re-truncating snippets has silently hidden load-
+ *  bearing code here before — the sidebar just pages: read from where the
+ *  last response stopped until the range is covered. Bounded, because a
+ *  cited region that needs more than this many round-trips is not
+ *  something anyone is reading mid-call.
+ */
+const MAX_PAGES = 8;
+
+export async function readFile(
+  repoId: string,
+  path: string,
+  start?: number,
+  end?: number
+): Promise<string | null> {
+  const from = start ?? 1;
+  if (end === undefined) return readFileOnce(repoId, path, start, end);
+
+  const parts: string[] = [];
+  let cursor = from;
+  for (let page = 0; page < MAX_PAGES && cursor <= end; page++) {
+    const text = await readFileOnce(repoId, path, cursor, end);
+    if (!text) break;
+    parts.push(text);
+    const got = text.split("\n").length;
+    // No forward progress means the server is not going to give us more,
+    // so stop rather than spin.
+    if (got < 1) break;
+    cursor += got;
+  }
+  return parts.length ? parts.join("\n") : null;
+}

@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     // Verified against the API rather than decoded here: the signing key
     // lives in the backend, and a token this route merely *parsed* would be
     // trivially forgeable.
-    const me = await fetch(`${BRAIN_API}/api/auth/me`, { headers: { authorization: authHeader } });
+    const me = await fetch(`${BRAIN_API}/api/auth/me`, { headers: { authorization: authHeader, "ngrok-skip-browser-warning": "1" } });
     if (!me.ok) {
       return NextResponse.json({ error: "Your session expired — sign in again" }, { status: 401 });
     }
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
     // does, or the waiting room is trivially bypassable by anyone with an
     // account.
     const meetingRes = await fetch(`${BRAIN_API}/api/meetings/${encodeURIComponent(room)}`, {
-      headers: { authorization: authHeader },
+      headers: { authorization: authHeader, "ngrok-skip-browser-warning": "1" },
     });
     if (!meetingRes.ok) {
       return NextResponse.json({ error: "No meeting with that code" }, { status: 404 });
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
     const meeting = await meetingRes.json();
 
     const workspacesRes = await fetch(`${BRAIN_API}/api/workspaces`, {
-      headers: { authorization: authHeader },
+      headers: { authorization: authHeader, "ngrok-skip-browser-warning": "1" },
     });
     const workspaces = workspacesRes.ok ? await workspacesRes.json() : [];
     const isMember = workspaces.some((w: { id: string }) => w.id === meeting.workspace_id);

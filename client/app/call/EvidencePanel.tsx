@@ -54,7 +54,7 @@ function AnswerText({
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(<span key={key++}>{text.slice(last)}</span>);
-  return <p className="leading-relaxed">{parts}</p>;
+  return <p className="leading-relaxed text-sm text-[color:var(--l-ink)]">{parts}</p>;
 }
 
 function EvidenceCard({
@@ -163,7 +163,7 @@ export default function EvidencePanel({ turns }: { turns: Turn[] }) {
                     </span>
                     {t.result.abstained && <span className="text-[color:var(--l-terra)]">abstained</span>}
                     {t.result.escalation && (
-                      <span className="text-[color:var(--l-muted)]">→ {t.result.escalation}</span>
+                      <span className="text-[color:var(--l-ink-2)]">→ {t.result.escalation}</span>
                     )}
                   </div>
                   {t.result.tool_trace.length > 0 && (
@@ -180,7 +180,7 @@ export default function EvidencePanel({ turns }: { turns: Turn[] }) {
                   )}
                 </>
               ) : (
-                <span className="text-[color:var(--l-muted)] text-sm animate-pulse">thinking…</span>
+                <span className="text-[color:var(--l-ink-2)] text-sm animate-pulse">thinking…</span>
               )}
             </div>
           )

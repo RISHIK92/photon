@@ -67,7 +67,7 @@ export default function ChatPanel() {
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {messages.length === 0 ? (
-          <p className="mt-6 text-[13px] leading-relaxed l-t-muted">
+          <p className="mt-6 text-[13px] leading-relaxed l-t-2">
             Messages here are between the people on the call. They are not sent to Photon and
             are not part of the meeting transcript.
           </p>
@@ -78,7 +78,7 @@ export default function ChatPanel() {
                 <div className="flex items-baseline gap-2">
                   <span
                     className="text-[11px] tracking-[0.16em] uppercase"
-                    style={{ color: m.local ? "var(--l-rust)" : "var(--l-muted)" }}
+                    style={{ color: m.local ? "var(--l-rust)" : "var(--l-ink-2)" }}
                   >
                     {m.local ? "You" : m.name}
                   </span>

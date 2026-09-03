@@ -164,8 +164,51 @@ export default function CallPage() {
     setTraces((prev) => applyTraceEvent(prev, event, fallbackTurnId));
   }, []);
 
+  // A voice turn's question and its answer arrive as two separate data
+  // packets, so the question is parked by turn_id until its answer lands.
+  // Appending on "turn.requested" instead would leave a dangling empty
+  // agent bubble for every turn that never produces one (ambient speech).
+  const voiceQuestions = useRef(new Map<string, string>());
+
   const onVoiceTraceEvent = useCallback(
-    (event: TraceEvent) => onTraceEvent(event, "voice"),
+    (event: TraceEvent) => {
+      onTraceEvent(event, "voice");
+
+      // Voice answers reach the browser already — the orchestrator
+      // republishes the brain-api's whole SSE stream over the data channel,
+      // and "turn.done" carries the full structured result. Only the
+      // advanced panel was reading it, so the evidence and code panels sat
+      // empty for the entire call while a voice conversation happened in
+      // front of them. Everything below is just folding that same event
+      // into the turn list the text path already builds.
+      const turnId = String(event.turn_id ?? "voice");
+
+      if (event.type === "turn.requested" && typeof event.question === "string") {
+        voiceQuestions.current.set(turnId, event.question);
+        return;
+      }
+
+      if (event.type !== "turn.done" || !event.result) return;
+      const result = event.result as AgentAnswer;
+
+      // The small-talk fast path publishes a turn.done too, so the panel
+      // can show a deliberate 0ms path. It ran no tools and cited nothing,
+      // so it belongs in the captions, not in the record of what answers
+      // were grounded in — folding it in would put "(no reply — ambient
+      // speech)" in the evidence panel.
+      if (!result.tool_trace?.length) {
+        voiceQuestions.current.delete(turnId);
+        return;
+      }
+
+      const question = voiceQuestions.current.get(turnId);
+      voiceQuestions.current.delete(turnId);
+      setTurns((prev) => [
+        ...prev,
+        ...(question ? [{ role: "user" as const, question }] : []),
+        { role: "agent" as const, result },
+      ]);
+    },
     [onTraceEvent]
   );
 
@@ -214,7 +257,7 @@ export default function CallPage() {
       const meeting_slug = meetingCode.trim() || undefined;
       const res = await fetch(`${BRAIN_API_URL}/api/agent/ask/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "1" },
         body: JSON.stringify({ question, workspace_id, meeting_slug }),
       });
       if (!res.ok || !res.body) throw new Error(`brain-api returned ${res.status}`);
