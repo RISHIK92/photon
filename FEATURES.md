@@ -156,44 +156,6 @@ picking right.
 
 ---
 
-## Why the answers hold up
-
-Numbers below are measured on this build, not estimated.
-
-| | |
-|---|---|
-| Typical spoken answer | **~2.0–2.5s** end to end |
-| Greeting / ambient chatter | **0ms** — answered or ignored locally, no API call |
-| Screen-share answer | ~3.3s, with a spoken acknowledgement at ~0.4s |
-| Repo import | **16.5s** for 83 files, 17.3s for 236 — tripling the files adds under a second |
-| Answer-quality eval | **24/24** on the base set, 15/16 on the deliberately hard set |
-
-The hard set is deliberately unkind: unpunctuated speech-to-text output,
-disfluent transcripts ("uh so the webhooks for north wind are failing can
-you check"), a customer referred to only indirectly, a customer that does
-not exist (it must abstain, not invent), ambient small talk, and a
-question whose answer is nowhere in the corpus.
-
----
-
-## What it is honestly not, yet
-
-Stated plainly, because a feature list that only lists wins is not useful
-when you are deciding whether to rely on something.
-
-- **The transcript records what the agent hears**, which is whoever is
-  currently addressing it. Full room transcription needs a speech stream
-  per participant — a real cost decision, not an oversight.
-- **Speech recognition is the weakest link in Indic languages**, not the
-  agent. A mis-heard word is a mis-answered question; the agent abstains
-  rather than guessing, which is the right failure but still a failure.
-- **No webhook on GitHub yet** — the repo picker recomputes what is new on
-  every open instead of being told.
-- **The agent endpoints are unauthenticated** in this build, a deliberate
-  demo-scope decision that has to change before real customer data.
-
----
-
 ## The shape of the bet
 
 Every company past its first few customers ends up building a small human
